@@ -30,6 +30,11 @@ const CACHE_DIR = '.';
 const CACHE_FILE = `${CACHE_DIR}/screening_cache.json`;
 const TODAY = new Date();
 
+// Bet sizing config — adjust to your bankroll
+const MIN_BET = 500;           // Minimum bet per market ($)
+const MAX_BET = 4000;          // Maximum bet per market ($)
+const MAX_GROUP_EXPOSURE = 8000; // Max total $ in one correlation group (2× MAX_BET)
+
 // Default geopolitical keywords for Iran/ME focus
 const DEFAULT_KEYWORDS = [
   'iran', 'ceasefire', 'israel', 'houthi', 'hezbollah', 'nuclear',
@@ -980,7 +985,7 @@ function formatDashboard(dashboard) {
   const reportDate = TODAY.toISOString().split('T')[0];
   const jangCount = dashboard.jangPicks.length + dashboard.jangCovered.length;
 
-  // Merge all candidates, compute alpha metrics
+  // Merge all candidates, compute multi-factor alpha
   const all = [
     ...dashboard.jangPicks,
     ...dashboard.jangCovered,
@@ -988,43 +993,150 @@ function formatDashboard(dashboard) {
     ...dashboard.screeningOnly,
   ].map(c => {
     const priceInCents = c.betPrice ? Math.round(c.betPrice * 100) : null;
-    const valueGap = (c.fairPrice != null && priceInCents != null) ? (c.fairPrice - priceInCents) : null;
     const hasJang = !!c.jang;
-
-    // Alpha score: how much the market disagrees with Jang (= opportunity)
-    // With fair price: valueGap (can be negative if market over-agrees)
-    // Without fair price but with Jang thesis: potential profit if Jang is right = (100 - betPrice)
-    // The cheaper the bet on Jang's side, the more market disagrees = more alpha
-    let alpha = null;
-    if (valueGap != null) {
-      alpha = valueGap;
-    } else if (hasJang && priceInCents != null) {
-      // Market disagrees with Jang: cheap bet = high alpha potential
-      alpha = 100 - priceInCents;
-    }
-
-    // Conviction = composite (market quality) + alpha bonus (Jang edge)
-    // Alpha ranges roughly -40 to +90 cents. Scale to bonus of -15 to +30 points.
-    // Time decay: Jang's thesis needs time to play out. Markets expiring in <7 days
-    // get reduced alpha because the thesis can't materialize that fast.
-    // Full alpha at 30+ days, linearly reduced below that, near-zero at 1-2 days.
     const days = c.daysToEnd != null ? c.daysToEnd : 30;
     const timeDecay = Math.min(1, days / 30);
-    const rawBonus = alpha != null ? Math.max(-15, Math.min(30, alpha * 0.33)) : 0;
-    const alphaBonus = rawBonus * timeDecay;
-    const conviction = Math.round(Math.min(100, (c.composite || 0) + alphaBonus));
 
-    return { ...c, valueGap, alpha, hasJang, conviction };
+    // ── MULTI-FACTOR ALPHA SCORE ──
+    // Alpha = weighted blend of independent signals, each normalized to 0-100 scale
+    // Factors:
+    //   1. Jang edge: analyst disagrees with market price (strongest signal)
+    //   2. GRIND return: annualized capital efficiency for fast-resolve bets
+    //   3. Edge score: auto-estimated mispricing from screening layer
+    //   4. Correlation group: multiple correlated bets = portfolio hedge opportunity
+    //   5. Liquidity quality: volume/liquidity ratio — high ratio = active market
+
+    let jangSignal = 0;
+    if (c.fairPrice != null && priceInCents != null) {
+      // Direct edge: Jang fair - market price
+      jangSignal = Math.max(0, Math.min(100, (c.fairPrice - priceInCents) * 1.5));
+    } else if (hasJang && priceInCents != null) {
+      // Jang thesis but no exact fair → potential profit if Jang right
+      jangSignal = Math.max(0, Math.min(100, (100 - priceInCents) * 0.8));
+    }
+    jangSignal *= timeDecay; // Jang thesis needs time to materialize
+
+    let grindSignal = 0;
+    if (c.grindDetails?.annualized) {
+      // Annualized return capped at 1000%, normalized to 0-100
+      grindSignal = Math.min(100, c.grindDetails.annualized / 10);
+    }
+
+    let edgeSignal = 0;
+    if (c.edgeScore != null) {
+      // Edge score from screening (already 0-100 scale)
+      edgeSignal = Math.min(100, c.edgeScore);
+    }
+
+    let corrSignal = 0;
+    if (c.correlationGroup) {
+      // More correlated markets = more hedge/arb opportunity
+      // Count how many markets share this group (approximate from data)
+      const groupSize = c.timeSeries?.length || 1;
+      corrSignal = Math.min(100, groupSize * 15);
+    }
+
+    let liqSignal = 0;
+    if (c.volume && c.liquidity && c.liquidity > 0) {
+      // Volume/liquidity ratio: high = active trading, good fills
+      const ratio = c.volume / c.liquidity;
+      liqSignal = Math.min(100, ratio * 20);
+    }
+
+    // Weighted blend — Jang is strongest when available, else other factors carry
+    const weights = hasJang
+      ? { jang: 0.45, grind: 0.15, edge: 0.15, corr: 0.10, liq: 0.15 }
+      : { jang: 0.00, grind: 0.25, edge: 0.35, corr: 0.15, liq: 0.25 };
+
+    const rawAlpha = Math.round(
+      jangSignal * weights.jang +
+      grindSignal * weights.grind +
+      edgeSignal * weights.edge +
+      corrSignal * weights.corr +
+      liqSignal * weights.liq
+    );
+
+    // Cap alpha by potential profit — if you can only make 2c, alpha can't be 20
+    const potentialProfit = priceInCents != null ? (100 - priceInCents) : 100;
+    const alpha = Math.min(rawAlpha, potentialProfit);
+
+    // Conviction = composite (market quality) + alpha bonus
+    // Alpha 0-100 → bonus -5 to +30 (only penalizes if alpha = 0 on a Jang market)
+    const rawBonus = hasJang
+      ? (alpha > 0 ? Math.min(30, alpha * 0.35) : -5)
+      : Math.min(15, alpha * 0.2);
+    const conviction = Math.round(Math.min(100, (c.composite || 0) + rawBonus));
+
+    return { ...c, alpha, hasJang, conviction };
   });
 
-  // Sort by conviction score descending
-  all.sort((a, b) => (b.conviction || 0) - (a.conviction || 0));
+  // Sort: KEO top picks first (by priority), then rest by conviction
+  all.sort((a, b) => {
+    const aKeo = (a.jang?.source === 'KEO' && a.jang.priority < 99) ? a.jang.priority : 999;
+    const bKeo = (b.jang?.source === 'KEO' && b.jang.priority < 99) ? b.jang.priority : 999;
+    if (aKeo !== bKeo) return aKeo - bKeo;
+    return (b.conviction || 0) - (a.conviction || 0);
+  });
+
+  // ── 5-RULE POSITION SIZING ──
+  // Count markets per correlation group for Rule 2
+  const groupCounts = {};
+  all.forEach(c => {
+    const g = c.correlationGroup || '_solo_' + c.id;
+    groupCounts[g] = (groupCounts[g] || 0) + 1;
+  });
+
+  all.forEach(c => {
+    const priceInCents = c.betPrice ? Math.round(c.betPrice * 100) : 50;
+
+    // RULE 1: BASE SIZE FROM ALPHA
+    let baseSize = 0;
+    if (c.alpha >= 30) {
+      baseSize = 3000 + (MAX_BET - 3000) * Math.min(1, (c.alpha - 30) / 20);
+    } else if (c.alpha >= 15) {
+      baseSize = 1500 + (3000 - 1500) * ((c.alpha - 15) / 15);
+    } else if (c.alpha >= 5) {
+      baseSize = MIN_BET + (1500 - MIN_BET) * ((c.alpha - 5) / 10);
+    } else {
+      baseSize = 0; // Alpha <5 → SKIP
+    }
+
+    // RULE 2: CORRELATION DISCOUNT
+    // Cap total group exposure at MAX_GROUP_EXPOSURE
+    const group = c.correlationGroup || '_solo_' + c.id;
+    const groupSize = groupCounts[group] || 1;
+    const groupCap = MAX_GROUP_EXPOSURE / groupSize;
+    baseSize = Math.min(baseSize, groupCap);
+
+    // RULE 3: LIQUIDITY CAP — never exceed 10% of market liquidity
+    if (c.liquidity) {
+      baseSize = Math.min(baseSize, c.liquidity * 0.10);
+    }
+
+    // RULE 4: DAYS ADJUSTMENT
+    const days = c.daysToEnd != null ? c.daysToEnd : 30;
+    let daysMult = 1.0;
+    if (days < 3) daysMult = 0.5;
+    else if (days > 90) daysMult = 0.75;
+    baseSize *= daysMult;
+
+    // RULE 5: PRICE-LEVEL ADJUSTMENT
+    let priceMult = 1.0;
+    if (priceInCents <= 20) priceMult = 0.5;       // Long shots
+    else if (priceInCents >= 90) priceMult = 0.75;  // Grinds (tiny profit/share)
+    baseSize *= priceMult;
+
+    // Final: round to nearest $50, enforce min/skip
+    c.sizeVal = Math.round(baseSize / 50) * 50;
+    if (c.sizeVal > 0 && c.sizeVal < MIN_BET) c.sizeVal = MIN_BET;
+    if (c.sizeVal > MAX_BET) c.sizeVal = MAX_BET;
+  });
 
   let out = '';
   out += `  TRADING DASHBOARD — ${reportDate}  |  ${all.length} markets  |  Jang: ${jangCount} covered\n`;
-  out += '  ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════\n';
-  out += '  #   Market                                       Bet  Price  Fair  Alpha  Days  Conv  Jang   Notes\n';
-  out += '  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
+  out += '  ══════════════════════════════════════════════════════════════════════════════════════════════════════\n';
+  out += '  #   Market                                       Bet  Price  Alpha  Days  Conv     Size  Notes\n';
+  out += '  ───────────────────────────────────────────────────────────────────────────────────────────────────────\n';
 
   all.forEach((c, i) => {
     const q = (c.question || '').substring(0, 45).padEnd(45);
@@ -1033,44 +1145,30 @@ function formatDashboard(dashboard) {
     const days = c.daysToEnd != null ? `${c.daysToEnd}d`.padStart(4) : '   ?';
     const conv = String(c.conviction || 0).padStart(3);
 
-    // Fair price column
-    let fair = '    ';
-    if (c.fairPrice != null) {
-      fair = `${c.fairPrice}c`.padStart(4);
-    }
+    // Alpha column: multi-factor score (0-100)
+    const alpha = c.alpha != null ? String(c.alpha).padStart(5) : '    -';
 
-    // Alpha column: edge vs fair price, or potential profit if market disagrees with Jang
-    let alpha = '      ';
-    if (c.valueGap != null) {
-      alpha = c.valueGap > 0 ? `+${c.valueGap}c`.padStart(6) : `${c.valueGap}c`.padStart(6);
-    } else if (c.hasJang && c.alpha != null) {
-      alpha = `~${c.alpha}c`.padStart(6);
-    }
+    // Size from 5-rule framework
+    const size = c.sizeVal > 0 ? `$${c.sizeVal.toLocaleString()}`.padStart(7) : '  SKIP';
 
-    // Jang column: source indicator
-    let jangCol = '      ';
-    if (c.jang?.source === 'KEO' && c.jang.priority < 99) {
-      jangCol = `KEO #${c.jang.priority}`.padEnd(6);
-    } else if (c.jang?.source === 'KEO') {
-      jangCol = 'KEO   ';
-    } else if (c.jang?.source === 'TOANBO') {
-      jangCol = 'TOANBO';
-    }
-
-    // Notes: short reasoning or group
+    // Notes: Jang source + reasoning or correlation group
     let notes = '';
+    if (c.jang?.source === 'KEO' && c.jang.priority < 99) {
+      notes = `[KEO#${c.jang.priority}] `;
+    } else if (c.jang) {
+      notes = '[J] ';
+    }
     if (c.jang?.reasoning) {
-      notes = c.jang.reasoning.substring(0, 45);
+      notes += c.jang.reasoning.substring(0, 40);
     } else {
-      notes = (c.correlationGroup || '').substring(0, 25);
+      notes += (c.correlationGroup || '').substring(0, 25);
     }
 
-    out += `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${fair}  ${alpha}  ${days}  ${conv}  ${jangCol} ${notes}\n`;
+    out += `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${alpha}  ${days}  ${conv}  ${size}  ${notes}\n`;
   });
 
-  out += '  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
-  out += '  Conv = market quality + Jang alpha bonus (positive alpha boosts, negative alpha penalizes)\n';
-  out += '  Alpha: +Nc = edge vs fair | ~Nc = potential profit (market vs Jang thesis) | blank = no Jang\n';
+  out += '  ──────────────────────────────────────────────────────────────────────────────────────────────────────\n';
+  out += '  Conv = composite (market quality) + alpha bonus | Alpha = multi-factor score (Jang + GRIND + edge + corr + liq)\n';
 
   return out;
 }
@@ -1176,47 +1274,139 @@ function classifyWallet(profile) {
   return 'NOISE';
 }
 
+// ── WALLET PROFILE CACHE ──
+// Persists to disk so profiles survive across sessions
+const WALLET_CACHE_FILE = 'wallet_cache.json';
+const WALLET_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+function loadWalletCache() {
+  if (existsSync(WALLET_CACHE_FILE)) {
+    try {
+      return JSON.parse(readFileSync(WALLET_CACHE_FILE, 'utf8'));
+    } catch { return {}; }
+  }
+  return {};
+}
+
+function saveWalletCache(cache) {
+  writeFileSync(WALLET_CACHE_FILE, JSON.stringify(cache, null, 2));
+}
+
+const walletCache = loadWalletCache();
+
 async function profileWallet(address, pseudonym, targetConditionId = null) {
-  const [positions, valueData] = await Promise.all([
-    fetchUserPositions(address),
-    fetchUserValue(address),
-  ]);
+  // Check cache for base profile (everything except target-market-specific fields)
+  const cacheKey = address.toLowerCase();
+  const cached = walletCache[cacheKey];
+  const now = Date.now();
 
-  const positionCount = Array.isArray(positions) ? positions.length : 0;
+  let positions;
+  let baseProfile;
 
-  // Value endpoint returns array
-  const portfolioValue = Array.isArray(valueData)
-    ? parseFloat(valueData[0]?.value || 0)
-    : parseFloat(valueData?.value || 0);
+  if (cached && (now - cached._ts) < WALLET_CACHE_TTL) {
+    // Cache hit — reuse base profile, only fetch positions if we need target market data
+    baseProfile = cached;
+    if (targetConditionId) {
+      // Need to look up target market position — fetch positions
+      positions = await fetchUserPositions(address);
+    }
+  } else {
+    // Cache miss — fetch positions (no more value endpoint)
+    positions = await fetchUserPositions(address);
 
-  // Calculate total PnL from all positions (cashPnl = unrealized + realized)
-  let totalPnl = 0;
+    const positionCount = Array.isArray(positions) ? positions.length : 0;
+
+    // Compute portfolio value from positions (sum of current value of all positions)
+    let portfolioValue = 0;
+    let totalPnl = 0;
+    let wins = 0;
+    let losses = 0;
+    const categoryHits = {};
+
+    const cats = [
+      [/iran|tehran|irgc|khamenei|persian/i, 'Iran/ME'],
+      [/ceasefire|peace|war|conflict|military/i, 'War/Conflict'],
+      [/trump|biden|election|president|congress|gop|democrat/i, 'US Politics'],
+      [/crypto|bitcoin|btc|eth|solana|defi/i, 'Crypto'],
+      [/israel|gaza|hamas|hezbollah|netanyahu/i, 'Israel/Palestine'],
+      [/russia|ukraine|putin|zelensky/i, 'Russia/Ukraine'],
+      [/oil|gas|energy|opec|hormuz/i, 'Energy/Oil'],
+      [/recession|gdp|fed|inflation|economy/i, 'Economy'],
+      [/nuclear|weapon|missile/i, 'Nuclear'],
+      [/china|taiwan|xi/i, 'China/Asia'],
+    ];
+
+    if (Array.isArray(positions)) {
+      for (const pos of positions) {
+        const pnl = parseFloat(pos.cashPnl || 0) + parseFloat(pos.realizedPnl || 0);
+        totalPnl += pnl;
+
+        // Portfolio value: sum current market value of open positions
+        const size = parseFloat(pos.size || 0);
+        const curPrice = parseFloat(pos.curPrice || pos.currentPrice || 0);
+        portfolioValue += size * curPrice;
+
+        // Win/loss tracking
+        if (Math.abs(pnl) > 1) {
+          if (pnl > 0) wins++;
+          else losses++;
+        }
+
+        // Expertise
+        const slug = (pos.slug || pos.title || pos.question || '').toLowerCase();
+        for (const [re, cat] of cats) {
+          if (re.test(slug)) {
+            categoryHits[cat] = (categoryHits[cat] || 0) + 1;
+          }
+        }
+      }
+    }
+
+    const totalBets = wins + losses;
+    const winRate = totalBets > 0 ? Math.round((wins / totalBets) * 100) : null;
+    const expertise = Object.entries(categoryHits)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([cat, count]) => `${cat} (${count})`);
+
+    baseProfile = {
+      address,
+      pseudonym: pseudonym || address.substring(0, 10) + '...',
+      positionCount,
+      portfolioValue,
+      totalPnl,
+      winRate,
+      wins,
+      losses,
+      expertise,
+      _ts: now,
+    };
+
+    // Save to cache
+    walletCache[cacheKey] = baseProfile;
+    saveWalletCache(walletCache);
+  }
+
+  // Extract target market data from positions (always fresh, not cached)
   let targetMarketPnl = 0;
   let targetMarketAvgPrice = 0;
   let targetMarketSize = 0;
   let targetMarketSide = null;
 
-  if (Array.isArray(positions)) {
+  if (targetConditionId && Array.isArray(positions)) {
     for (const pos of positions) {
-      const pnl = parseFloat(pos.cashPnl || 0) + parseFloat(pos.realizedPnl || 0);
-      totalPnl += pnl;
-
-      // Find position on our target market
-      if (targetConditionId && pos.conditionId === targetConditionId) {
-        targetMarketPnl = pnl;
+      if (pos.conditionId === targetConditionId) {
+        targetMarketPnl = parseFloat(pos.cashPnl || 0) + parseFloat(pos.realizedPnl || 0);
         targetMarketAvgPrice = parseFloat(pos.avgPrice || 0);
         targetMarketSize = parseFloat(pos.size || 0);
         targetMarketSide = pos.outcome || (pos.outcomeIndex === 0 ? 'Yes' : 'No');
+        break;
       }
     }
   }
 
   return {
-    address,
-    pseudonym: pseudonym || address.substring(0, 10) + '...',
-    positionCount,
-    portfolioValue,
-    totalPnl,
+    ...baseProfile,
     targetMarketPnl,
     targetMarketAvgPrice,
     targetMarketSize,
@@ -1411,8 +1601,15 @@ function formatSMMReport(report) {
       ? `$${Math.round(h.portfolioValue).toLocaleString()}`
       : '?';
 
+    // Win rate
+    const winRateStr = h.winRate != null ? `${h.winRate}% (${h.wins}W/${h.losses}L)` : '?';
+
+    // Expertise
+    const expertiseStr = h.expertise && h.expertise.length > 0 ? h.expertise.join(', ') : 'Mixed';
+
     let line = `    ${name} ${shares} shares  [${h.classification}]\n`;
     line += `      → Portfolio: ${portStr} | ${h.positionCount || 0} positions | Total PnL: ${totalPnlStr}\n`;
+    line += `      → Win rate: ${winRateStr} | Expertise: ${expertiseStr}\n`;
     if (h.targetMarketAvgPrice) {
       line += `      → This market: avg entry ${avgEntry}, PnL ${mktPnlStr}\n`;
     }
@@ -1441,6 +1638,58 @@ function formatSMMReport(report) {
   out += `    Screening suggests: ${report.screeningSide}\n`;
   const confirmStr = report.smmConfirms ? 'CONFIRMED — SMM aligns with screening' : 'CONFLICT — SMM disagrees with screening';
   out += `    Verdict: ${confirmStr}\n`;
+  out += '  ─────────────────────────────────────────────────\n';
+
+  // TRADE RECOMMENDATION: entry, target, stoploss
+  const side = report.smartMoneySide;
+  const currentPrice = side === 'YES' ? (p.yes || 0) : (p.no || 0);
+  const currentPriceCents = Math.round(currentPrice * 100);
+
+  // Smart money avg entry on the recommended side
+  const sideHolders = side === 'YES' ? report.yesSide.holders : report.noSide.holders;
+  const smartHolders = sideHolders.filter(h => ['SMART MONEY', 'WHALE (MIXED)'].includes(h.classification));
+  const allSideHolders = sideHolders.filter(h => h.targetMarketAvgPrice > 0);
+
+  // Smart money avg entry (weighted by shares)
+  let smartAvgEntry = null;
+  if (smartHolders.length > 0) {
+    const totalShares = smartHolders.reduce((s, h) => s + h.amount, 0);
+    smartAvgEntry = smartHolders.reduce((s, h) => s + (h.targetMarketAvgPrice || 0) * h.amount, 0) / (totalShares || 1);
+  }
+
+  // All holders avg entry (for reference)
+  let allAvgEntry = null;
+  if (allSideHolders.length > 0) {
+    const totalShares = allSideHolders.reduce((s, h) => s + h.amount, 0);
+    allAvgEntry = allSideHolders.reduce((s, h) => s + (h.targetMarketAvgPrice || 0) * h.amount, 0) / (totalShares || 1);
+  }
+
+  // Entry price: buy at or below smart money avg entry (if available), else current price
+  const entryPrice = smartAvgEntry
+    ? Math.min(currentPriceCents, Math.round(smartAvgEntry * 100))
+    : currentPriceCents;
+
+  // Target price: for active exit traders — take profit at 85-90% of max (don't hold to resolution)
+  // If current price is already high (>85c), target is 95c
+  const targetPrice = currentPriceCents >= 85 ? 95 : Math.min(95, currentPriceCents + Math.round((100 - currentPriceCents) * 0.7));
+
+  // Stoploss: if price drops below entry by more than the potential profit, cut losses
+  // Risk:reward at least 1:2 — stoploss = entry - (target - entry) / 2
+  const potentialProfit = targetPrice - entryPrice;
+  const stopDistance = Math.max(5, Math.round(potentialProfit / 2)); // min 5c stop
+  const stoplossPrice = Math.max(1, entryPrice - stopDistance);
+
+  out += '\n  TRADE RECOMMENDATION\n';
+  out += `    Side: ${side}\n`;
+  out += `    Current price: ${currentPriceCents}c\n`;
+  if (smartAvgEntry) {
+    out += `    Smart money avg entry: ${Math.round(smartAvgEntry * 100)}c\n`;
+  }
+  out += `    Recommended entry: ${entryPrice}c (limit order)\n`;
+  out += `    Target price: ${targetPrice}c (take profit — active exit)\n`;
+  out += `    Stoploss: ${stoplossPrice}c (cut loss — ${stopDistance}c risk for ${potentialProfit}c reward, R:R 1:${(potentialProfit / stopDistance).toFixed(1)})\n`;
+
+  // Position size from dashboard rules
   out += '  ─────────────────────────────────────────────────\n';
 
   return out;

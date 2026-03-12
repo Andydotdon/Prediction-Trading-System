@@ -627,6 +627,97 @@ Tag: EDGE
 
 ---
 
+## POSITION SIZING: 5-RULE FRAMEWORK ($500-$4,000/market)
+
+Every candidate that passes screening gets a recommended size. Size is NOT just "how confident am I" — it accounts for correlation risk, liquidity, time, and price level.
+
+### Rule 1: Base Size from Alpha
+
+Alpha = multi-factor score combining Jang edge, GRIND return, screening edge score, correlation opportunity, and liquidity quality.
+
+```
+Alpha 30+   → $3,000 - $4,000  (strong edge, max conviction)
+Alpha 15-30 → $1,500 - $3,000  (moderate edge)
+Alpha 5-15  → $500 - $1,500    (small edge, minimum size)
+Alpha < 5   → SKIP             (not worth execution cost)
+```
+
+### Rule 2: Correlation Discount (MOST IMPORTANT)
+
+If multiple markets share the same thesis, a single event can wipe ALL of them simultaneously. Cap total exposure per correlation group.
+
+```
+MAX_GROUP_EXPOSURE = $8,000 (configurable, default = 2× MAX_BET)
+Per-market cap = $8,000 ÷ number of markets in group
+
+Examples:
+  4 ceasefire markets  → $2,000 max each ($8K total exposure)
+  6 Iran strike markets → $1,333 max each
+  16 escalation markets → $500 max each
+  1 standalone market   → full $4,000 available
+```
+
+**Why this matters:** Without Rule 2, betting $2,000 on each of 16 escalation markets = $32,000 exposure to one thesis. If a ceasefire happens, all 16 lose simultaneously.
+
+### Rule 3: Liquidity Cap
+
+Never exceed 10% of market liquidity. Large orders in thin books move the price against you.
+
+```
+Market liquidity $3,000 → max bet $300 → SKIP (below minimum)
+Market liquidity $50,000 → max bet $5,000 → capped at $4,000 by Rule 1
+```
+
+### Rule 4: Days to Resolution Adjustment
+
+```
+< 3 days:   × 0.5   (binary coin flip, thesis can't develop)
+3-90 days:  × 1.0   (sweet spot for active exit trading)
+> 90 days:  × 0.75  (capital locked too long, opportunity cost)
+```
+
+### Rule 5: Price-Level Adjustment
+
+```
+Price ≤ 20c:  × 0.5   (long shots — high reward but high loss rate)
+Price 20-80c: × 1.0   (value zone — best risk/reward)
+Price ≥ 90c:  × 0.75  (grinds — safe but tiny profit per share)
+```
+
+### Sizing Example
+
+```
+Market: US x Iran ceasefire by May 31? — NO at 44c
+  Rule 1: Alpha 31 → base $3,100
+  Rule 2: 4 ceasefire markets → cap $2,000
+  Rule 3: Liquidity $121K → cap $12,100 (not binding)
+  Rule 4: 79 days → × 1.0
+  Rule 5: Price 44c → × 1.0
+  FINAL: $2,000
+
+Market: Will Qatar strike Iran? — NO at 90c
+  Rule 1: Alpha 10 → base $750
+  Rule 2: 16 escalation markets → cap $500
+  Rule 3: Liquidity OK
+  Rule 4: 18 days → × 1.0
+  Rule 5: Price 90c → × 0.75 = $375 → floor to $500 (minimum)
+  FINAL: $500
+
+Market: US x Iran ceasefire by March 15? — NO at 98c
+  Rule 1: Alpha 2 → SKIP (alpha < 5)
+```
+
+### Configuration
+
+Adjust these constants in `screener.mjs` to match your bankroll:
+```javascript
+const MIN_BET = 500;             // Minimum per market ($)
+const MAX_BET = 4000;            // Maximum per market ($)
+const MAX_GROUP_EXPOSURE = 8000; // Max total $ in one correlation group
+```
+
+---
+
 ## CAPITAL SPLIT STRATEGY (Same Market, Multiple Timeframes)
 
 When a correlation group contains multiple timeframes of the same bet (e.g., ceasefire by Mar 31 / May 31 / Jun 30), you can split capital across them instead of picking just one.

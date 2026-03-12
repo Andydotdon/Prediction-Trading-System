@@ -1,0 +1,188 @@
+{
+  "0xa7d1ae08567d192db3c3cf1858c62c76dc8cb824": {
+    "address": "0xa7d1ae08567d192db3c3cf1858c62c76dc8cb824",
+    "pseudonym": "Worldly-Crab",
+    "positionCount": 4,
+    "portfolioValue": 390588.1989408775,
+    "totalPnl": -275456.41122968355,
+    "winRate": 0,
+    "wins": 0,
+    "losses": 4,
+    "expertise": [
+      "Iran/ME (4)"
+    ],
+    "_ts": 1773313266662
+  },
+  "0xfd22b8843ae03a33a8a4c5e39ef1e5ff33ebad91": {
+    "address": "0xfd22b8843ae03a33a8a4c5e39ef1e5ff33ebad91",
+    "pseudonym": "Forsaken-Conifer",
+    "positionCount": 6,
+    "portfolioValue": 1705100.7727555896,
+    "totalPnl": 251075.52145354566,
+    "winRate": 67,
+    "wins": 4,
+    "losses": 2,
+    "expertise": [
+      "Iran/ME (4)",
+      "China/Asia (1)"
+    ],
+    "_ts": 1773313266668
+  },
+  "0x05e26c775ecfe91b897d47f134c1bf5900ca6e12": {
+    "address": "0x05e26c775ecfe91b897d47f134c1bf5900ca6e12",
+    "pseudonym": "Common-Entirety",
+    "positionCount": 9,
+    "portfolioValue": 394891.30300147255,
+    "totalPnl": 51300.512921654066,
+    "winRate": 89,
+    "wins": 8,
+    "losses": 1,
+    "expertise": [
+      "Iran/ME (4)",
+      "War/Conflict (1)",
+      "Israel/Palestine (1)"
+    ],
+    "_ts": 1773313266667
+  },
+  "0xbad457dc633bbb7b6cbe09dd5867a5e8e597acd7": {
+    "address": "0xbad457dc633bbb7b6cbe09dd5867a5e8e597acd7",
+    "pseudonym": "Terrible-Home",
+    "positionCount": 3,
+    "portfolioValue": 184049.415378,
+    "totalPnl": -1015720.1028741306,
+    "winRate": 0,
+    "wins": 0,
+    "losses": 3,
+    "expertise": [
+      "Iran/ME (1)"
+    ],
+    "_ts": 1773313266663
+  },
+  "0x0a854897a06d4999e5b2dde5693609f1428ffe9d": {
+    "address": "0x0a854897a06d4999e5b2dde5693609f1428ffe9d",
+    "pseudonym": "Murky-Sleepiness",
+    "positionCount": 4,
+    "portfolioValue": 99881.18575972499,
+    "totalPnl": -24887.375680648773,
+    "winRate": 25,
+    "wins": 1,
+    "losses": 3,
+    "expertise": [
+      "Iran/ME (3)",
+      "War/Conflict (1)",
+      "Russia/Ukraine (1)"
+    ],
+    "_ts": 1773313266665
+  },
+  "0x96489abcb9f583d6835c8ef95ffc923d05a86825": {
+    "address": "0x96489abcb9f583d6835c8ef95ffc923d05a86825",
+    "pseudonym": "Whimsical-Terminal",
+    "positionCount": 100,
+    "portfolioValue": 3782720.100476214,
+    "totalPnl": -234623.2523381058,
+    "winRate": 34,
+    "wins": 34,
+    "losses": 66,
+    "expertise": [
+      "Iran/ME (32)",
+      "War/Conflict (24)",
+      "Israel/Palestine (10)"
+    ],
+    "_ts": 1773313266669
+  },
+  "0x11e50ec01d48adc0be2292cb8e2a5fee0369ee4d": {
+    "address": "0x11e50ec01d48adc0be2292cb8e2a5fee0369ee4d",
+    "pseudonym": "Frozen-Pomelo",
+    "positionCount": 27,
+    "portfolioValue": 149675.57727908652,
+    "totalPnl": -249433.43424902673,
+    "winRate": 15,
+    "wins": 4,
+    "losses": 23,
+    "expertise": [
+      "Iran/ME (18)",
+      "Crypto (6)",
+      "Energy/Oil (3)"
+    ],
+    "_ts": 1773313266664
+  },
+  "0xbacd00c9080a82ded56f504ee8810af732b0ab35": {
+    "address": "0xbacd00c9080a82ded56f504ee8810af732b0ab35",
+    "pseudonym": "Dearest-Agenda",
+    "positionCount": 100,
+    "portfolioValue": 916770.5965851623,
+    "totalPnl": 71165.78849284808,
+    "winRate": 49,
+    "wins": 49,
+    "losses": 51,
+    "expertise": [
+      "US Politics (33)",
+      "Iran/ME (28)",
+      "War/Conflict (21)"
+    ],
+    "_ts": 1773313266672
+  },
+  "0x8fba3aa991dc7df44f8a3b20a178e1781b7d433a": {
+    "address": "0x8fba3aa991dc7df44f8a3b20a178e1781b7d433a",
+    "pseudonym": "Immaculate-Path",
+    "positionCount": 9,
+    "portfolioValue": 121872.66409731453,
+    "totalPnl": -223577.7772366368,
+    "winRate": 0,
+    "wins": 0,
+    "losses": 9,
+    "expertise": [
+      "Iran/ME (8)",
+      "US Politics (1)",
+      "Crypto (1)"
+    ],
+    "_ts": 1773313283416
+  },
+  "0xfffadf38a520cd5a0035ff52d7fceb436a08864b": {
+    "address": "0xfffadf38a520cd5a0035ff52d7fceb436a08864b",
+    "pseudonym": "0xfffadf38a520cd5a0035ff52d7fceb436a08864b",
+    "positionCount": 5,
+    "portfolioValue": 615561.4634298165,
+    "totalPnl": 65597.44450558326,
+    "winRate": 80,
+    "wins": 4,
+    "losses": 1,
+    "expertise": [
+      "US Politics (2)",
+      "Iran/ME (1)"
+    ],
+    "_ts": 1773313283423
+  },
+  "0x9c274a7dfe8829cc8e178b27e3ff5eb7bdb5d050": {
+    "address": "0x9c274a7dfe8829cc8e178b27e3ff5eb7bdb5d050",
+    "pseudonym": "Aware-Initialize",
+    "positionCount": 22,
+    "portfolioValue": 20959.304117584998,
+    "totalPnl": -24652.31479408062,
+    "winRate": 0,
+    "wins": 0,
+    "losses": 20,
+    "expertise": [
+      "Iran/ME (21)",
+      "Israel/Palestine (1)",
+      "Crypto (1)"
+    ],
+    "_ts": 1773313283417
+  },
+  "0xc6587b11a2209e46dfe3928b31c5514a8e33b784": {
+    "address": "0xc6587b11a2209e46dfe3928b31c5514a8e33b784",
+    "pseudonym": "Glamorous-Stitcher",
+    "positionCount": 32,
+    "portfolioValue": 971122.0476520549,
+    "totalPnl": 25745.710399147505,
+    "winRate": 38,
+    "wins": 12,
+    "losses": 20,
+    "expertise": [
+      "Iran/ME (12)",
+      "War/Conflict (6)",
+      "US Politics (5)"
+    ],
+    "_ts": 1773313283426
+  }
+}
