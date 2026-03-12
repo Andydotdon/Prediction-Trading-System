@@ -4,57 +4,115 @@
 
 **Purpose:** For any screened market, rapidly identify who holds the biggest positions, whether they're smart or dumb money, and produce actionable trade parameters (entry, target, stop, avg smart money price).
 
-**Two modes:**
-- **RAPID SCAN (5 min)** — Use this by default. Covers 80% of what you need.
+**Three modes:**
+- **AUTOMATED SCAN (~10 sec)** — Default. Runs via `node screener.mjs --smm`. Uses Polymarket Data API to pull holders, positions, PnL, and portfolio data. Auto-classifies wallets.
+- **FIREPLACE SCAN (~1 min)** — Visual. Open Fireplace for the market, read pre-computed stats. Use when API is down or you want visual confirmation.
 - **DEEP DIVE (30+ min)** — Use when a market passes screening AND Jang has a thesis AND you need full wallet profiling before sizing up.
 
 ---
 
-## RAPID SCAN: 5-MINUTE EXECUTION GUIDE
+## AUTOMATED SCAN: 10-SECOND EXECUTION (Recommended)
 
-This is the standard process. Run this for every market that passes screening.
+Run from terminal. Uses Polymarket Data API (no auth required).
+
+### Usage
+
+```bash
+# Single market (by candidate number from last screening)
+node screener.mjs --smm 20
+
+# Single market (by text search)
+node screener.mjs --smm "ceasefire march 31"
+
+# All S-TIER and A-TIER markets (best per correlation group)
+node screener.mjs --smm-all
+```
+
+### What It Does Automatically
+
+1. **Fetches top 20 holders** per side (YES/NO) via `data-api.polymarket.com/holders`
+2. **Profiles top 4 wallets per side** in parallel:
+   - Portfolio value (`/value`)
+   - Position count + total PnL (`/positions`)
+   - Avg entry price + PnL on target market
+3. **Classifies each wallet** as SMART MONEY / DUMB MONEY / WHALE (MIXED) / INSIDER/GAMBLER / NOISE
+4. **Determines smart money side** using wallet count + market-specific PnL
+5. **Cross-checks** against screening recommendation
+6. **Outputs formatted report** with verdict: CONFIRMED or CONFLICT
+
+### Classification Rules (Automated)
+
+| Pattern | Classification | Logic |
+|---|---|---|
+| Portfolio > $500K, PnL ratio > -5% | **SMART MONEY** | Big wallet, not losing badly |
+| Total PnL > $50K, 20+ positions | **SMART MONEY** | Proven profitable track record |
+| Total PnL > $5K, 10+ positions | **SMART MONEY** | Consistent positive returns |
+| PnL ratio < -30% AND PnL < -$10K | **DUMB MONEY** | Losing a large % of portfolio |
+| Total PnL < -$100K | **DUMB MONEY** | Massive absolute losses |
+| ≤ 5 positions, portfolio > $10K | **INSIDER/GAMBLER** | Fresh wallet, big bets |
+| Portfolio > $200K, 30+ positions, mixed PnL | **WHALE (MIXED)** | Big player, unclear edge |
+| Everything else | **NOISE** | Insufficient signal |
+
+### Smart Money Verdict Logic
+
+The verdict combines multiple signals:
+1. **Wallet classification count**: Which side has more SMART MONEY + WHALE wallets?
+2. **Market-specific PnL**: Which side's top holders are profiting on THIS market?
+3. **Tie-break**: Market PnL wins when wallet counts are close
+
+---
+
+## FIREPLACE SCAN: 1-MINUTE VISUAL CHECK
+
+Use Fireplace (fireplace.gg) when you want visual confirmation or the API is slow.
+
+### What to Read (30 seconds)
+
+| Fireplace Data | What It Tells You |
+|---|---|
+| Market Strength Score (Y% / N%) | Quick directional bias |
+| TVL per side | Which side has more capital committed |
+| Weighted PnL per side | Which side's holders are profitable overall |
+| Avg PnL per side | Same signal, normalized |
+| Holder Stats badges | Win rate / activity classification icons |
+
+### Top Holders Table (30 seconds)
+
+For each side, check the top 4-5 holders:
+- **Name**: Click to see full profile on Polymarket
+- **Shares**: Position size
+- **Average**: Avg entry price (compare to current price)
+- **Total PnL**: Green = winning, Red = losing
+
+**Quick read**: If one side is almost all green and the other is almost all red, that's your signal.
+
+---
+
+## MANUAL RAPID SCAN: 5-MINUTE FALLBACK
+
+Use this only when both automated and Fireplace approaches are unavailable.
 
 ### Step 1: Pull Top Holders (1 min)
 
 Go to the **specific market page** on polymarket.com → scroll to **"Top Holders"** tab.
 
-Capture:
-- Top 7 YES holders (username + share count)
-- Top 7 NO holders (username + share count)
-- Note the total share imbalance (which side has more concentrated holdings?)
-
 ### Step 2: Profile Top 3-4 Wallets Per Side (3 min)
 
-Click each username from the Top Holders list (NOT by guessing @URLs — display names often don't match handles).
+Click each username from the Top Holders list.
 
 **30-Second Profile Assessment — grab these 5 data points:**
 
 | Data Point | Where on Profile | What It Tells You |
 |---|---|---|
-| **Join Date** | Below username | Fresh (< 3 months) = suspicious. Old (> 1 year) = track record exists. |
 | **Portfolio Value** | Left side stats | Whale ($100K+) vs fish ($1K). Size = conviction level. |
-| **Biggest Win** | Left side stats | One big win + small portfolio = lucky once. Multiple big wins = skill. |
 | **Prediction Count** | Left side stats | < 20 predictions = insufficient data, don't trust. > 100 = enough history. |
 | **P&L Chart (1M)** | Top right card | Green trending up = currently hot. Red trending down = currently cold or gambler. |
-
-Then scroll to **Active Positions** and check:
-- What other markets are they in? (reveals their thesis)
-- Are their positions in profit or loss? (green % = winning, red % = losing)
-- What's their **avg entry price** on our target market?
-
-**Quick Classification:**
-
-| Pattern | Classification | Action |
-|---|---|---|
-| Old account + high prediction count + green P&L + diversified positions | **SMART MONEY** | Weight their signal heavily |
-| Old account + high prediction count + red P&L on this category | **FADING EDGE** | They may have been good before but wrong now |
-| Fresh account + huge positions + few predictions | **INSIDER OR GAMBLER** | Flag — could be very valuable signal OR total noise |
-| Any account + massive negative P&L (millions in red) | **DUMB MONEY** | Their position is ANTI-signal — consider fading |
-| Moderate account + many predictions + mixed P&L | **NOISE** | Ignore — no clear edge |
+| **Avg entry price** | Active Positions | Where they got in on our target market |
+| **Other positions** | Active Positions | Reveals their broader thesis |
 
 ### Step 3: Compile Report (1 min)
 
-Fill in the output template below using what you found.
+Use the automated report format below as template.
 
 ---
 
@@ -126,36 +184,30 @@ Fill in the output template below using what you found.
 
 ---
 
-## DATA SOURCES: WHAT WORKS vs WHAT DOESN'T
+## DATA SOURCES
 
-### USE THESE (Fast, Free, No Login)
+### Automated (Used by `--smm` command)
 
-| Source | What You Get | How to Access |
+| Endpoint | What It Returns | Auth |
 |---|---|---|
-| **Polymarket Top Holders tab** | Top YES/NO holders with share counts per market | Market page → scroll to Top Holders tab |
-| **Polymarket Profile pages** | Portfolio value, biggest win, prediction count, join date, active positions with avg entry + P&L % | Click username from Top Holders (or polymarket.com/@username) |
-| **Polymarket Activity tab** | Recent trades with timestamps, sides, sizes | Market page → Activity tab |
-| **CLOB API: Order Book** | Bid/ask depth, spread, liquidity | `clob.polymarket.com/book?token_id=[id]` |
-| **CLOB API: Price History** | Price chart data | `clob.polymarket.com/prices-history?...` |
-| **Gamma API** | Market metadata, volume, dates, resolution rules | `gamma-api.polymarket.com/markets?slug=[slug]` |
+| `data-api.polymarket.com/holders?market={conditionId}` | Top 20 holders per side: wallet address, pseudonym, name, amount, outcomeIndex | None (public) |
+| `data-api.polymarket.com/positions?user={address}` | All open positions: size, avgPrice, cashPnl, realizedPnl, title, outcome | None (public) |
+| `data-api.polymarket.com/value?user={address}` | Total portfolio value | None (public) |
+| `gamma-api.polymarket.com/activity?user={address}` | Recent trades with timestamps | None (public) |
 
-### DON'T WASTE TIME ON THESE (All Require Login/Auth)
+### Visual / Manual
 
-| Tool | Why It Doesn't Work for Rapid Scan |
-|---|---|
-| Fireplace (fireplace.gg) | Institutional terminal, not publicly accessible |
-| Polywhaler (polywhaler.com) | Dashboard shows $0 placeholders without login |
-| PolyMonit (polymonit.com) | Requires account; PnL "planned but not yet available" |
-| Polymarket Analytics (polymarketanalytics.com) | Requires live browser session for dynamic data |
-| Unusual Whales Predictions | Requires login |
-| HashDive (hashdive.com) | Wallet lookup only — need address first, no leaderboard |
+| Source | What You Get | Best For |
+|---|---|---|
+| **Fireplace (fireplace.gg)** | Market strength score, TVL per side, weighted PnL, holder badges, top holder table | Quick visual confirmation |
+| **Polymarket Top Holders tab** | Top holders with share counts | Manual fallback |
+| **Polymarket Profile pages** | Portfolio value, prediction count, active positions | Deep dive on specific wallets |
 
 ### KNOWN QUIRKS
 
-- **Display names ≠ @handles**: The username shown in Top Holders often doesn't match the profile URL. Always click from the market page, don't guess URLs.
-- **PnL chart sometimes doesn't render**: Especially without login. Use the P&L number shown instead.
-- **data-api.polymarket.com requires wallet address**: No public leaderboard endpoint. `/positions` needs `?user=[address]`. Useful for deep dive on specific wallets only.
-- **Some profiles return 404**: The wallet exists on-chain but has no public Polymarket profile page. Skip these.
+- **Positions endpoint caps at 100**: Heavy traders may have 100+ positions but API returns max 100. PnL may be understated for very active wallets.
+- **Display names**: The `name` field from holders API matches Fireplace display names (e.g., "wan123", "anoin123"). The `pseudonym` field is the auto-generated anonymous name.
+- **Rate limiting**: Data API has rate limits. The `--smm-all` command adds 300ms delays between markets. If you hit 429 errors, wait and retry.
 
 ---
 
@@ -338,20 +390,30 @@ Everything beyond this is deep dive territory.
 
 ## CHANGELOG
 
+### V2 → V3 Changes
+
+| Aspect | V2 | V3 (Current) |
+|---|---|---|
+| **Default mode** | Manual Rapid Scan (5 min) | **Automated Scan (~10 sec)** via `node screener.mjs --smm` |
+| **Data source** | Manual profile clicking on polymarket.com | **Polymarket Data API** — holders, positions, value endpoints. No auth needed. |
+| **Wallet profiling** | Click each profile, read 5 data points manually | **Parallel API calls** — portfolio value, position count, total PnL, market-specific PnL, avg entry |
+| **Classification** | Manual 5-type (Smart/Fading/Insider/Dumb/Noise) | **Automated 5-type** (Smart Money/Dumb Money/Whale Mixed/Insider-Gambler/Noise) using quantitative thresholds |
+| **Verdict** | Human judgment call | **Algorithmic** — wallet count + market PnL determines smart money side, auto-checks against screening |
+| **Batch mode** | N/A | **`--smm-all`** runs best-per-group for all S/A-tier candidates |
+| **Fireplace** | Listed as "don't waste time" (login required) | **Documented as visual confirmation tool** — works, good for quick visual check |
+| **Output** | Manual template fill | **Auto-generated report** saved to `SMM_REPORT_[date].md` |
+
 ### V1 → V2 Changes
 
-| Aspect | V1 | V2 (Current) |
+| Aspect | V1 | V2 |
 |---|---|---|
-| **Structure** | Theory-first, 28 metrics then process | **Process-first.** Rapid Scan guide at the top, deep metrics as reference. |
-| **Execution time** | 30+ min (all metrics, API-heavy) | **5 min default** via Rapid Scan. Deep Dive optional. |
-| **Data sources** | Assumed API access for everything | **Documented what works vs doesn't.** External tools all need login — use Polymarket native pages. |
-| **Output** | Wallet scorecard (academic) | **Trade-ready report template** with entry, target, stop, avg SM price. |
-| **Profile assessment** | 28 metrics per wallet | **5 data points in 30 seconds** per wallet for rapid scan. |
-| **Whale patterns** | Not included | **5 common patterns** with real examples and action items. |
-| **Quick classification** | Performance tiers only | **5-type classifier** (Smart Money / Fading Edge / Insider or Gambler / Dumb Money / Noise). |
-| **Pipeline** | Separate from screening | **Clear connection** — Screening → Rapid Scan → User Decision → Deep Dive → Jang → Case Mapping. |
+| **Structure** | Theory-first, 28 metrics then process | Process-first. Rapid Scan guide at the top, deep metrics as reference. |
+| **Execution time** | 30+ min (all metrics, API-heavy) | 5 min default via Rapid Scan. Deep Dive optional. |
+| **Output** | Wallet scorecard (academic) | Trade-ready report template with entry, target, stop, avg SM price. |
+| **Quick classification** | Performance tiers only | 5-type classifier. |
+| **Pipeline** | Separate from screening | Clear connection — Screening → Rapid Scan → User Decision → Deep Dive → Jang → Case Mapping. |
 
 ---
 
-*Version 2.0 — March 2026*
-*Companion to Screening System V2.0 and Trading Filter Rules V2*
+*Version 3.0 — March 2026*
+*Companion to Screening System V2.2 and Trading Filter Rules V2*

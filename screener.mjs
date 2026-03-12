@@ -10,6 +10,9 @@
  *   node screener.mjs --keywords "iran,ceasefire,nuclear"  # Custom keywords
  *   node screener.mjs --probability      # Interactive mode: prompts for P1-P4 on top candidates
  *   node screener.mjs --cache            # Use cached data (skip API calls)
+ *   node screener.mjs --smm "ceasefire march 31"           # SMM report for a specific market
+ *   node screener.mjs --smm 3            # SMM report for candidate #3 from last screening
+ *   node screener.mjs --smm-all          # SMM reports for all S-TIER and A-TIER candidates
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -21,6 +24,7 @@ import { createInterface } from 'readline';
 
 const GAMMA_API = 'https://gamma-api.polymarket.com';
 const CLOB_API = 'https://clob.polymarket.com';
+const DATA_API = 'https://data-api.polymarket.com';
 const CACHE_DIR = '.';
 const CACHE_FILE = `${CACHE_DIR}/screening_cache.json`;
 const TODAY = new Date();
@@ -701,11 +705,462 @@ async function interactiveProbability(candidates) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// SMM: SMART MONEY METRICS (Automated via Data API)
+// ═══════════════════════════════════════════════════════════════════════
+
+const SMM_CACHE = {};
+
+async function fetchWithRetry(url, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const resp = await fetch(url);
+      if (resp.status === 429) {
+        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+        continue;
+      }
+      if (!resp.ok) return null;
+      return resp.json();
+    } catch {
+      if (i === retries) return null;
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+  return null;
+}
+
+async function fetchTopHolders(conditionId) {
+  const url = `${DATA_API}/holders?market=${conditionId}&limit=20`;
+  return fetchWithRetry(url);
+}
+
+async function fetchUserPositions(address) {
+  const url = `${DATA_API}/positions?user=${address}`;
+  return fetchWithRetry(url);
+}
+
+async function fetchUserValue(address) {
+  const url = `${DATA_API}/value?user=${address}`;
+  return fetchWithRetry(url);
+}
+
+async function fetchUserActivity(address) {
+  const url = `${GAMMA_API}/activity?user=${address}&limit=50`;
+  return fetchWithRetry(url);
+}
+
+function classifyWallet(profile) {
+  const { totalPnl, positionCount, portfolioValue, targetMarketPnl } = profile;
+
+  // Use PnL as % of portfolio for relative assessment
+  const pnlRatio = portfolioValue > 0 ? totalPnl / portfolioValue : 0;
+
+  // Whale with strong track record (absolute)
+  if (totalPnl > 50000 && positionCount > 20) return 'SMART MONEY';
+  if (totalPnl > 10000 && positionCount > 30) return 'SMART MONEY';
+
+  // Large portfolio + positive PnL ratio
+  if (portfolioValue > 500000 && pnlRatio > -0.05) return 'SMART MONEY';
+  if (portfolioValue > 100000 && totalPnl > 5000 && positionCount > 15) return 'SMART MONEY';
+
+  // Moderate positive PnL + experience
+  if (totalPnl > 5000 && positionCount > 10) return 'SMART MONEY';
+  if (portfolioValue > 50000 && totalPnl > 0 && positionCount > 15) return 'SMART MONEY';
+
+  // Heavily negative PnL relative to portfolio = dumb money
+  if (pnlRatio < -0.30 && totalPnl < -10000) return 'DUMB MONEY';
+  if (totalPnl < -100000) return 'DUMB MONEY';
+  if (totalPnl < -20000 && positionCount < 15) return 'DUMB MONEY';
+
+  // Fresh wallet with big position = insider or gambler
+  if (positionCount <= 5 && portfolioValue > 10000) return 'INSIDER/GAMBLER';
+
+  // Large portfolio but mixed results — still has signal weight
+  if (portfolioValue > 200000 && positionCount > 30) return 'WHALE (MIXED)';
+
+  return 'NOISE';
+}
+
+async function profileWallet(address, pseudonym, targetConditionId = null) {
+  const [positions, valueData] = await Promise.all([
+    fetchUserPositions(address),
+    fetchUserValue(address),
+  ]);
+
+  const positionCount = Array.isArray(positions) ? positions.length : 0;
+
+  // Value endpoint returns array
+  const portfolioValue = Array.isArray(valueData)
+    ? parseFloat(valueData[0]?.value || 0)
+    : parseFloat(valueData?.value || 0);
+
+  // Calculate total PnL from all positions (cashPnl = unrealized + realized)
+  let totalPnl = 0;
+  let targetMarketPnl = 0;
+  let targetMarketAvgPrice = 0;
+  let targetMarketSize = 0;
+  let targetMarketSide = null;
+
+  if (Array.isArray(positions)) {
+    for (const pos of positions) {
+      const pnl = parseFloat(pos.cashPnl || 0) + parseFloat(pos.realizedPnl || 0);
+      totalPnl += pnl;
+
+      // Find position on our target market
+      if (targetConditionId && pos.conditionId === targetConditionId) {
+        targetMarketPnl = pnl;
+        targetMarketAvgPrice = parseFloat(pos.avgPrice || 0);
+        targetMarketSize = parseFloat(pos.size || 0);
+        targetMarketSide = pos.outcome || (pos.outcomeIndex === 0 ? 'Yes' : 'No');
+      }
+    }
+  }
+
+  return {
+    address,
+    pseudonym: pseudonym || address.substring(0, 10) + '...',
+    positionCount,
+    portfolioValue,
+    totalPnl,
+    targetMarketPnl,
+    targetMarketAvgPrice,
+    targetMarketSize,
+    targetMarketSide,
+  };
+}
+
+async function runSMMReport(market) {
+  const conditionId = market.conditionId;
+  if (!conditionId) {
+    console.log('  ERROR: No conditionId for this market. Cannot fetch holders.');
+    return null;
+  }
+
+  console.log(`\n  Fetching top holders for: ${market.question}`);
+  console.log(`  Condition ID: ${conditionId}`);
+
+  const holdersData = await fetchTopHolders(conditionId);
+  if (!holdersData || !Array.isArray(holdersData) || holdersData.length === 0) {
+    console.log('  ERROR: Could not fetch holders data. API may be down or conditionId invalid.');
+    return null;
+  }
+
+  // Parse holders into YES/NO sides
+  const yesSide = [];
+  const noSide = [];
+
+  function makeHolderEntry(h) {
+    return {
+      address: h.proxyWallet || h.address || '',
+      name: h.name || '',
+      pseudonym: h.pseudonym || h.name || (h.proxyWallet || '').substring(0, 12) + '...',
+      amount: parseFloat(h.amount) || 0,
+      outcomeIndex: h.outcomeIndex,
+    };
+  }
+
+  // Split by outcomeIndex: 0 = YES, 1 = NO
+  for (const tokenGroup of holdersData) {
+    const holders = tokenGroup.holders || [];
+    for (const h of holders) {
+      const entry = makeHolderEntry(h);
+      if (h.outcomeIndex === 0) {
+        yesSide.push(entry);
+      } else {
+        noSide.push(entry);
+      }
+    }
+  }
+
+  // Fallback: if outcomeIndex wasn't present, use array position (first group = YES, second = NO)
+  if (yesSide.length === 0 && noSide.length === 0 && holdersData.length >= 2) {
+    for (const h of (holdersData[0]?.holders || [])) yesSide.push(makeHolderEntry(h));
+    for (const h of (holdersData[1]?.holders || [])) noSide.push(makeHolderEntry(h));
+  }
+
+  // Sort by amount
+  yesSide.sort((a, b) => b.amount - a.amount);
+  noSide.sort((a, b) => b.amount - a.amount);
+
+  const yesTotalShares = yesSide.reduce((s, h) => s + h.amount, 0);
+  const noTotalShares = noSide.reduce((s, h) => s + h.amount, 0);
+  const dominantSide = yesTotalShares >= noTotalShares ? 'YES' : 'NO';
+  const ratio = dominantSide === 'YES'
+    ? (yesTotalShares / (noTotalShares || 1)).toFixed(1)
+    : (noTotalShares / (yesTotalShares || 1)).toFixed(1);
+
+  // Profile top wallets from each side (parallel)
+  console.log('  Profiling top wallets...');
+  const topYes = yesSide.slice(0, 4);
+  const topNo = noSide.slice(0, 4);
+  const allToProfile = [...topYes, ...topNo];
+
+  const profiles = await Promise.all(
+    allToProfile.map(h => profileWallet(h.address, h.pseudonym, conditionId))
+  );
+
+  // Merge profile data back
+  const profileMap = {};
+  for (const p of profiles) {
+    profileMap[p.address] = p;
+  }
+
+  function enrichHolder(h) {
+    const p = profileMap[h.address] || {};
+    const classification = classifyWallet({
+      totalPnl: p.totalPnl || 0,
+      positionCount: p.positionCount || 0,
+      portfolioValue: p.portfolioValue || 0,
+    });
+    return {
+      ...h,
+      ...p,
+      displayName: h.name || h.pseudonym,
+      classification,
+    };
+  }
+
+  const enrichedYes = topYes.map(enrichHolder);
+  const enrichedNo = topNo.map(enrichHolder);
+
+  // Determine smart money side using weighted scoring
+  const smartTypes = ['SMART MONEY', 'WHALE (MIXED)'];
+  const yesSmartCount = enrichedYes.filter(h => smartTypes.includes(h.classification)).length;
+  const noSmartCount = enrichedNo.filter(h => smartTypes.includes(h.classification)).length;
+  const yesSmartPnl = enrichedYes.filter(h => smartTypes.includes(h.classification)).reduce((s, h) => s + (h.totalPnl || 0), 0);
+  const noSmartPnl = enrichedNo.filter(h => smartTypes.includes(h.classification)).reduce((s, h) => s + (h.totalPnl || 0), 0);
+
+  // Also look at aggregate market-specific PnL (who's winning on THIS market)
+  const yesMktPnl = enrichedYes.reduce((s, h) => s + (h.targetMarketPnl || 0), 0);
+  const noMktPnl = enrichedNo.reduce((s, h) => s + (h.targetMarketPnl || 0), 0);
+
+  let smartMoneySide;
+  if (noSmartCount > yesSmartCount + 1) smartMoneySide = 'NO';
+  else if (yesSmartCount > noSmartCount + 1) smartMoneySide = 'YES';
+  else if (noSmartCount > yesSmartCount) smartMoneySide = noMktPnl > yesMktPnl ? 'NO' : 'YES';
+  else if (yesSmartCount > noSmartCount) smartMoneySide = yesMktPnl > noMktPnl ? 'YES' : 'NO';
+  else smartMoneySide = noMktPnl > yesMktPnl ? 'NO' : 'YES'; // Tie-break by market PnL
+
+  // Determine recommended side based on screening + SMM
+  const prices = market.prices || parseOutcomePrices(market);
+  const screeningSide = market.grindDetails?.side || (prices && prices.no > prices.yes ? 'NO' : 'YES');
+
+  const smmConfirms = smartMoneySide === screeningSide;
+
+  // Build report
+  const report = {
+    market: market.question,
+    conditionId,
+    date: TODAY.toISOString().split('T')[0],
+    prices,
+    volume: market.volume || market.volumeNum || 0,
+    yesSide: { totalShares: yesTotalShares, holders: enrichedYes },
+    noSide: { totalShares: noTotalShares, holders: enrichedNo },
+    dominantSide,
+    dominantRatio: ratio,
+    smartMoneySide,
+    screeningSide,
+    smmConfirms,
+    yesSmartCount,
+    noSmartCount,
+    yesMktPnl,
+    noMktPnl,
+    tier: market.tier || getTier(market.composite || market._composite || 0),
+    tag: market.tag || market._tag,
+    composite: market.composite || market._composite,
+  };
+
+  return report;
+}
+
+function formatSMMReport(report) {
+  if (!report) return '  No data available.\n';
+
+  const p = report.prices || {};
+  const yesP = ((p.yes || 0) * 100).toFixed(1);
+  const noP = ((p.no || 0) * 100).toFixed(1);
+
+  let out = '';
+  out += '\n═══════════════════════════════════════════════════════════\n';
+  out += `  SMM REPORT: ${report.market}\n`;
+  out += `  Date: ${report.date} | Screening: ${report.tier} (${report.tag}) | Composite: ${report.composite}\n`;
+  out += '═══════════════════════════════════════════════════════════\n\n';
+
+  out += '  MARKET DATA\n';
+  out += `    YES price: ${yesP}c | NO price: ${noP}c\n`;
+  out += `    Volume: $${Math.round(report.volume).toLocaleString()}\n\n`;
+
+  out += '  HOLDER DISTRIBUTION (Top 20)\n';
+  out += `    YES total shares: ${Math.round(report.yesSide.totalShares).toLocaleString()}\n`;
+  out += `    NO total shares:  ${Math.round(report.noSide.totalShares).toLocaleString()}\n`;
+  out += `    Dominant side: ${report.dominantSide} by ${report.dominantRatio}x\n\n`;
+
+  function formatHolder(h) {
+    let rawName = h.displayName || h.pseudonym || '';
+    // Truncate long hex addresses
+    if (rawName.length > 20) rawName = rawName.substring(0, 18) + '..';
+    const name = rawName.padEnd(22);
+    const shares = Math.round(h.amount).toLocaleString().padStart(12);
+    const totalPnlVal = h.totalPnl || 0;
+    const totalPnlStr = totalPnlVal >= 0
+      ? `+$${Math.round(totalPnlVal).toLocaleString()}`
+      : `-$${Math.round(Math.abs(totalPnlVal)).toLocaleString()}`;
+    const mktPnlVal = h.targetMarketPnl || 0;
+    const mktPnlStr = mktPnlVal >= 0
+      ? `+$${Math.round(mktPnlVal).toLocaleString()}`
+      : `-$${Math.round(Math.abs(mktPnlVal)).toLocaleString()}`;
+    const avgEntry = h.targetMarketAvgPrice
+      ? `${(h.targetMarketAvgPrice * 100).toFixed(1)}c`
+      : '?';
+    const portStr = h.portfolioValue
+      ? `$${Math.round(h.portfolioValue).toLocaleString()}`
+      : '?';
+
+    let line = `    ${name} ${shares} shares  [${h.classification}]\n`;
+    line += `      → Portfolio: ${portStr} | ${h.positionCount || 0} positions | Total PnL: ${totalPnlStr}\n`;
+    if (h.targetMarketAvgPrice) {
+      line += `      → This market: avg entry ${avgEntry}, PnL ${mktPnlStr}\n`;
+    }
+    return line;
+  }
+
+  // YES side wallets
+  out += '  TOP YES HOLDERS\n';
+  for (const h of report.yesSide.holders) {
+    out += formatHolder(h);
+  }
+
+  out += '\n  TOP NO HOLDERS\n';
+  for (const h of report.noSide.holders) {
+    out += formatHolder(h);
+  }
+
+  // Verdict
+  const fmtPnl = v => v >= 0 ? `+$${Math.round(v).toLocaleString()}` : `-$${Math.round(Math.abs(v)).toLocaleString()}`;
+
+  out += '\n  ─────────────────────────────────────────────────\n';
+  out += '  SMART MONEY VERDICT\n';
+  out += `    Smart/whale wallets: YES ${report.yesSmartCount} | NO ${report.noSmartCount}\n`;
+  out += `    Market PnL (top holders): YES ${fmtPnl(report.yesMktPnl)} | NO ${fmtPnl(report.noMktPnl)}\n`;
+  out += `    Smart money favors: ${report.smartMoneySide}\n`;
+  out += `    Screening suggests: ${report.screeningSide}\n`;
+  const confirmStr = report.smmConfirms ? 'CONFIRMED — SMM aligns with screening' : 'CONFLICT — SMM disagrees with screening';
+  out += `    Verdict: ${confirmStr}\n`;
+  out += '  ─────────────────────────────────────────────────\n';
+
+  return out;
+}
+
+function findMarketByQuery(candidates, query) {
+  // Try exact number match first (candidate #N)
+  const num = parseInt(query);
+  if (!isNaN(num) && num >= 1 && num <= candidates.length) {
+    return candidates[num - 1];
+  }
+
+  // Fuzzy text match
+  const q = query.toLowerCase();
+  const matches = candidates.filter(c => {
+    const text = (c.question || '').toLowerCase();
+    return q.split(/\s+/).every(word => text.includes(word));
+  });
+
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    console.log(`  Multiple matches found:`);
+    matches.forEach((m, i) => console.log(`    ${i + 1}. ${m.question}`));
+    console.log(`  Using first match.`);
+    return matches[0];
+  }
+
+  console.log(`  No market found matching "${query}". Available candidates:`);
+  candidates.slice(0, 10).forEach((c, i) => console.log(`    ${i + 1}. ${c.question}`));
+  return null;
+}
+
+async function handleSMMCommand(args) {
+  // Load screening data
+  if (!existsSync('screening_data.json')) {
+    console.log('  ERROR: No screening_data.json found. Run a screening first.');
+    process.exit(1);
+  }
+  const data = JSON.parse(readFileSync('screening_data.json', 'utf8'));
+  const candidates = data.candidates || [];
+
+  if (candidates.length === 0) {
+    console.log('  ERROR: No candidates in screening data.');
+    process.exit(1);
+  }
+
+  const smmAllMode = args.includes('--smm-all');
+
+  if (smmAllMode) {
+    // Run SMM on all S-TIER and A-TIER candidates (best per correlation group)
+    const targetTiers = ['S-TIER', 'A-TIER'];
+    const grouped = {};
+    for (const c of candidates) {
+      if (!targetTiers.includes(c.tier)) continue;
+      const group = c.correlationGroup || 'Z';
+      if (!grouped[group] || c.composite > grouped[group].composite) {
+        grouped[group] = c;
+      }
+    }
+    const targets = Object.values(grouped);
+    console.log(`\n  Running SMM on ${targets.length} markets (best per correlation group)...\n`);
+
+    let allReports = '';
+    for (const market of targets) {
+      const report = await runSMMReport(market);
+      const formatted = formatSMMReport(report);
+      console.log(formatted);
+      allReports += formatted;
+      // Small delay between markets to avoid rate limiting
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    const reportFile = `SMM_REPORT_${TODAY.toISOString().split('T')[0]}.md`;
+    writeFileSync(reportFile, allReports);
+    console.log(`\n  All SMM reports saved to ${reportFile}`);
+    return;
+  }
+
+  // Single market mode
+  const smmIdx = args.indexOf('--smm');
+  const query = args[smmIdx + 1];
+  if (!query) {
+    console.log('  Usage: node screener.mjs --smm "search term" or --smm <number>');
+    console.log('  Available candidates:');
+    candidates.slice(0, 15).forEach((c, i) => console.log(`    ${i + 1}. [${c.tier}] ${c.question}`));
+    process.exit(1);
+  }
+
+  const market = findMarketByQuery(candidates, query);
+  if (!market) process.exit(1);
+
+  const report = await runSMMReport(market);
+  const formatted = formatSMMReport(report);
+  console.log(formatted);
+
+  const reportFile = `SMM_REPORT_${TODAY.toISOString().split('T')[0]}.md`;
+  writeFileSync(reportFile, formatted);
+  console.log(`\n  Report saved to ${reportFile}`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // MAIN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Handle SMM commands before screening
+  if (args.includes('--smm') || args.includes('--smm-all')) {
+    console.log('╔══════════════════════════════════════════════════════╗');
+    console.log('║  POLYMARKET SMM — Smart Money Metrics (Automated)    ║');
+    console.log('╚══════════════════════════════════════════════════════╝');
+    await handleSMMCommand(args);
+    return;
+  }
+
   const useCache = args.includes('--cache');
   const interactiveMode = args.includes('--probability');
   const kwArg = args.find(a => a.startsWith('--keywords'));
