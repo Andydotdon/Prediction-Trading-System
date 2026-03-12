@@ -6,14 +6,14 @@
  * Probability (P1-P4) is manual input — user scores after seeing candidates.
  *
  * Usage:
- *   node screener.mjs                    # Full scan, default keywords
+ *   node screener.mjs                    # Full scan + dashboard (screening → Jang overlay → alpha ranking)
  *   node screener.mjs --keywords "iran,ceasefire,nuclear"  # Custom keywords
  *   node screener.mjs --probability      # Interactive mode: prompts for P1-P4 on top candidates
  *   node screener.mjs --cache            # Use cached data (skip API calls)
  *   node screener.mjs --smm "ceasefire march 31"           # SMM report for a specific market
  *   node screener.mjs --smm 3            # SMM report for candidate #3 from last screening
  *   node screener.mjs --smm-all          # SMM reports for all S-TIER and A-TIER candidates
- *   node screener.mjs --dashboard        # Unified dashboard: screening + Jang analysis
+ *   node screener.mjs --dashboard        # Dashboard only (uses last screening_data.json)
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -823,23 +823,45 @@ function parseJangToanBo() {
     const aiMatch = section.match(/\*\*AI:\*\*\s*(.+)/);
     if (aiMatch) entry.aiNote = aiMatch[1].trim();
 
-    // Try to extract percentage estimates from Jang line
-    const pctMatch = entry.reasoning?.match(/~?(\d+)%\s*(YES|NO|ceasefire|regime|invasion)/i);
-    if (pctMatch) {
-      entry.jangPct = parseInt(pctMatch[1]);
+    // Extract probability + direction + edge from BOTH Jang and AI lines
+    const ai = entry.aiNote || '';
+    const jang = entry.reasoning || '';
+    const combined = jang + ' ' + ai;
+
+    // 1. Extract Jang probability: "tin Jang ~45%", "Jang ~55-60%", "Jang estimate ~50%"
+    const jangPctMatch = combined.match(/(?:tin\s+)?Jang\s*(?:estimate)?\s*~?(\d+)(?:-(\d+))?%/i);
+    if (jangPctMatch) {
+      // If range like "55-60%", take midpoint
+      entry.jangPct = jangPctMatch[2]
+        ? Math.round((parseInt(jangPctMatch[1]) + parseInt(jangPctMatch[2])) / 2)
+        : parseInt(jangPctMatch[1]);
     }
 
-    // Extract direction from AI line edge mentions
-    const edgeFromAI = entry.aiNote?.match(/edge\s*~?\+?(\d+)%/i);
-    if (edgeFromAI) entry.jangEdge = parseInt(edgeFromAI[1]);
+    // 2. Extract direction from AI line: "NO by... có edge", "YES (...) có edge/underpriced"
+    const dirEdgeMatch = ai.match(/(YES|NO)\s+(?:by\s+)?(?:\w+\s+){0,4}\([\d.]+[¢c]\)\s+(?:có\s+edge|underpriced|có\s+thể\s+underpriced)/i);
+    if (dirEdgeMatch) {
+      entry.direction = dirEdgeMatch[1].toUpperCase();
+    }
+    // Also check Jang line for direction
+    if (!entry.direction) {
+      const dirFromJang = jang.match(/\b(?:mua|bet|chọn|pick)\s+(YES|NO)\b/i)
+        || jang.match(/→\s*(YES|NO)\b/i);
+      if (dirFromJang) entry.direction = dirFromJang[1].toUpperCase();
+    }
+    // Infer direction from Vietnamese negation in Jang line (KHÔNG = NO thesis)
+    if (!entry.direction && jang) {
+      if (/^(?:(?!có thể|khả thi).)*KHÔNG\b/i.test(jang)) entry.direction = 'NO';
+    }
 
-    // Extract direction from explicit YES/NO mentions in reasoning
-    if (entry.reasoning) {
-      const r = entry.reasoning;
-      // Only match explicit "Mua YES/NO" or "→ YES/NO" or "bet YES/NO" patterns
-      const dirFromReasoning = r.match(/\b(?:mua|bet|chọn|pick)\s+(YES|NO)\b/i)
-        || r.match(/→\s*(YES|NO)\b/i);
-      if (dirFromReasoning) entry.direction = dirFromReasoning[1].toUpperCase();
+    // 3. Extract edge from AI line: "edge ~20%", "edge ~+15%", "edge nhẹ"
+    const edgeMatch = ai.match(/edge\s*~?\+?(\d+)%/i);
+    if (edgeMatch) entry.jangEdge = parseInt(edgeMatch[1]);
+
+    // 4. If AI line mentions "Jang ~N%" with YES/NO context, set jangPct + jangSide
+    if (entry.jangPct && !entry.jangSide) {
+      // Try to find which side the percentage refers to
+      const sideMatch = combined.match(/~?\d+%\s*(YES|NO)/i);
+      if (sideMatch) entry.jangSide = sideMatch[1].toUpperCase();
     }
 
     if (entry.slug || entry.sectionTitle) {
@@ -855,8 +877,13 @@ function matchJangToCandidate(candidate, jangEntries) {
   const cQuestion = (candidate.question || '').toLowerCase();
   const cEventSlug = (candidate.eventSlug || '').toLowerCase();
 
+  // Strip date suffixes for core slug matching: "regime-fall-by-the-end-of-2026" → "regime-fall"
+  const stripDateSuffix = (s) => s.replace(/-by.*$/, '').replace(/-before.*$/, '').replace(/-in-\d{4}$/, '').replace(/-\d{3,}$/, '');
+  const cSlugCore = stripDateSuffix(cSlug);
+  const cEventSlugCore = stripDateSuffix(cEventSlug);
+
   for (const jang of jangEntries) {
-    // Match by slug
+    // Match by exact slug containment
     if (jang.slug && cSlug && cSlug.includes(jang.slug.toLowerCase())) return jang;
     if (jang.slug && cEventSlug && cEventSlug.includes(jang.slug.toLowerCase())) return jang;
 
@@ -866,6 +893,14 @@ function matchJangToCandidate(candidate, jangEntries) {
         if (cSlug && cSlug.includes(s.toLowerCase())) return jang;
         if (cEventSlug && cEventSlug.includes(s.toLowerCase())) return jang;
       }
+    }
+
+    // Core slug matching: strip date suffixes and compare
+    const allJangSlugs = [jang.slug, ...(jang.slugs || [])].filter(Boolean);
+    for (const js of allJangSlugs) {
+      const jCore = stripDateSuffix(js.toLowerCase());
+      if (jCore.length > 8 && cSlugCore && (cSlugCore.includes(jCore) || jCore.includes(cSlugCore))) return jang;
+      if (jCore.length > 8 && cEventSlugCore && (cEventSlugCore.includes(jCore) || jCore.includes(cEventSlugCore))) return jang;
     }
 
     // Fuzzy match by market name keywords (strict: 4+ char words, need 3+ matches)
@@ -895,15 +930,20 @@ function buildDashboard(candidates, jangEntries) {
       betPrice = betSide === 'YES' ? prices.yes : prices.no;
     }
 
+    // Compute fair price (Jang's estimated value on bet side, in cents)
+    let fairPrice = null;
     if (jang?.jangPct != null && jang?.direction) {
       // jangPct is the probability for jangSide (e.g., 35% YES)
       // Convert to win% on direction's side (e.g., if jangSide=YES @ 35%, direction=NO → win%=65%)
       const jangWinPct = (jang.jangSide && jang.jangSide !== jang.direction)
         ? (100 - jang.jangPct)
         : jang.jangPct;
+      fairPrice = jangWinPct;
       const directionPrice = jang.direction === 'YES' ? (prices.yes || 0) : (prices.no || 0);
       jangEdge = jangWinPct - Math.round(directionPrice * 100);
-    } else if (jang?.jangEdge) {
+    } else if (jang?.jangEdge && betPrice) {
+      // Infer fair price from edge: fair = market price + edge
+      fairPrice = Math.round(betPrice * 100) + jang.jangEdge;
       jangEdge = jang.jangEdge;
     }
 
@@ -911,6 +951,7 @@ function buildDashboard(candidates, jangEntries) {
       ...c,
       betSide,
       betPrice,
+      fairPrice,
       jang,
       jangEdge,
     };
@@ -939,101 +980,100 @@ function formatDashboard(dashboard) {
   const reportDate = TODAY.toISOString().split('T')[0];
   const jangCount = dashboard.jangPicks.length + dashboard.jangCovered.length;
 
-  let out = '';
-  out += '╔═══════════════════════════════════════════════════════════════════════════════╗\n';
-  out += `║  TRADING DASHBOARD — ${reportDate}                                              ║\n`;
-  out += `║  Screened: ${dashboard.total} candidates | Jang coverage: ${jangCount} markets                     ║\n`;
-  out += '╚═══════════════════════════════════════════════════════════════════════════════╝\n\n';
+  // Merge all candidates, compute alpha metrics
+  const all = [
+    ...dashboard.jangPicks,
+    ...dashboard.jangCovered,
+    ...dashboard.grindOnly,
+    ...dashboard.screeningOnly,
+  ].map(c => {
+    const priceInCents = c.betPrice ? Math.round(c.betPrice * 100) : null;
+    const valueGap = (c.fairPrice != null && priceInCents != null) ? (c.fairPrice - priceInCents) : null;
+    const hasJang = !!c.jang;
 
-  function fmtRow(c, i, showJang = true) {
-    const q = (c.question || '').substring(0, 28).padEnd(28);
-    const bet = (c.betSide || '?').padEnd(3);
-    const price = c.betPrice ? `${(c.betPrice * 100).toFixed(0)}c`.padStart(5) : '    ?';
-    const comp = String(c.composite || 0).padStart(5);
-    const tier = (c.tier || getTier(c.composite || 0)).substring(0, 1);
-
-    if (showJang && c.jang) {
-      // Show win% on the bet side (flip if jangSide != direction)
-      const winPct = c.jang.jangPct != null
-        ? ((c.jang.jangSide && c.jang.jangSide !== c.jang.direction) ? (100 - c.jang.jangPct) : c.jang.jangPct)
-        : null;
-      const jPct = winPct != null ? `${winPct}%`.padStart(4) : '  ? ';
-      const edge = c.jangEdge != null ? `${c.jangEdge > 0 ? '+' : ''}${c.jangEdge}%`.padStart(5) : '   ? ';
-      const note = c.jang.priority && c.jang.priority < 99 ? `KEO #${c.jang.priority}` : (c.correlationGroup || '').substring(0, 12);
-      return `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${jPct}  ${edge} ${comp}  ${tier}    ${note}`;
-    } else {
-      const days = c.daysToEnd != null ? `${c.daysToEnd}d`.padStart(4) : '   ?';
-      const ann = c.grindDetails?.annualized ? `${c.grindDetails.annualized}%`.padStart(6) : '     ?';
-      const group = (c.correlationGroup || '').substring(0, 12);
-      return `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${days}  ${ann} ${comp}  ${tier}    ${group}`;
+    // Alpha score: how much the market disagrees with Jang (= opportunity)
+    // With fair price: valueGap (can be negative if market over-agrees)
+    // Without fair price but with Jang thesis: potential profit if Jang is right = (100 - betPrice)
+    // The cheaper the bet on Jang's side, the more market disagrees = more alpha
+    let alpha = null;
+    if (valueGap != null) {
+      alpha = valueGap;
+    } else if (hasJang && priceInCents != null) {
+      // Market disagrees with Jang: cheap bet = high alpha potential
+      alpha = 100 - priceInCents;
     }
-  }
 
-  // Section 1: Jang Top Picks
-  if (dashboard.jangPicks.length > 0) {
-    out += '  JANG TOP PICKS (highest conviction)\n';
-    out += '  ─────────────────────────────────────────────────────────────────────────\n';
-    out += '  #   Market                       Bet  Price  Jang%  Edge   Comp  T    Notes\n';
+    return { ...c, valueGap, alpha, hasJang };
+  });
 
-    dashboard.jangPicks.forEach((c, i) => {
-      out += fmtRow(c, i) + '\n';
-      if (c.jang?.reasoning) {
-        const reason = c.jang.reasoning.substring(0, 80);
-        out += `      → ${reason}\n`;
-      }
-      if (c.jang?.risk) {
-        const risk = c.jang.risk.substring(0, 70);
-        out += `      → Risk: ${risk}\n`;
-      }
-    });
-    out += '\n';
-  }
+  // Sort: Jang-covered first by alpha desc, then non-Jang by composite
+  all.sort((a, b) => {
+    // Jang-covered always above non-Jang
+    if (a.hasJang && !b.hasJang) return -1;
+    if (!a.hasJang && b.hasJang) return 1;
+    // Both Jang-covered: sort by alpha desc (highest disagreement/edge first)
+    if (a.hasJang && b.hasJang) {
+      if (a.alpha != null && b.alpha != null) return b.alpha - a.alpha;
+      if (a.alpha != null) return -1;
+      if (b.alpha != null) return 1;
+      return (b.composite || 0) - (a.composite || 0);
+    }
+    // Both non-Jang: sort by composite
+    return (b.composite || 0) - (a.composite || 0);
+  });
 
-  // Section 2: Jang Covered
-  if (dashboard.jangCovered.length > 0) {
-    out += '  JANG COVERED (thesis available)\n';
-    out += '  ─────────────────────────────────────────────────────────────────────────\n';
-    out += '  #   Market                       Bet  Price  Jang%  Edge   Comp  T    Group\n';
+  let out = '';
+  out += `  TRADING DASHBOARD — ${reportDate}  |  ${all.length} markets  |  Jang: ${jangCount} covered\n`;
+  out += '  ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════\n';
+  out += '  #   Market                                       Bet  Price  Fair  Alpha  Days  Jang   Notes\n';
+  out += '  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
 
-    dashboard.jangCovered.forEach((c, i) => {
-      out += fmtRow(c, i) + '\n';
-      if (c.jang?.reasoning) {
-        const reason = c.jang.reasoning.substring(0, 80);
-        out += `      → ${reason}\n`;
-      }
-    });
-    out += '\n';
-  }
+  all.forEach((c, i) => {
+    const q = (c.question || '').substring(0, 45).padEnd(45);
+    const bet = (c.betSide || '?').padEnd(3);
+    const price = c.betPrice ? `${(c.betPrice * 100).toFixed(0)}c`.padStart(4) : '   ?';
+    const days = c.daysToEnd != null ? `${c.daysToEnd}d`.padStart(4) : '   ?';
 
-  // Section 3: GRIND
-  if (dashboard.grindOnly.length > 0) {
-    out += '  GRIND OPPORTUNITIES (fast-resolve, capital efficiency)\n';
-    out += '  ─────────────────────────────────────────────────────────────────────────\n';
-    out += '  #   Market                       Bet  Price  Days  Ann.%   Comp  T    Group\n';
+    // Fair price column
+    let fair = '    ';
+    if (c.fairPrice != null) {
+      fair = `${c.fairPrice}c`.padStart(4);
+    }
 
-    dashboard.grindOnly.slice(0, 15).forEach((c, i) => {
-      out += fmtRow(c, i, false) + '\n';
-    });
-    out += '\n';
-  }
+    // Alpha column: edge vs fair price, or potential profit if market disagrees with Jang
+    let alpha = '      ';
+    if (c.valueGap != null) {
+      // Has fair price: show exact gap
+      alpha = c.valueGap > 0 ? `+${c.valueGap}c`.padStart(6) : `${c.valueGap}c`.padStart(6);
+    } else if (c.hasJang && c.alpha != null) {
+      // No fair price but Jang thesis: show potential profit with ~ prefix
+      alpha = `~${c.alpha}c`.padStart(6);
+    }
 
-  // Section 4: Screening Only
-  if (dashboard.screeningOnly.length > 0) {
-    out += '  SCREENING ONLY (no Jang coverage — use --smm for validation)\n';
-    out += '  ─────────────────────────────────────────────────────────────────────────\n';
-    out += '  #   Market                       Bet  Price  Days  Edge*   Comp  T    Group\n';
+    // Jang column: source indicator
+    let jangCol = '      ';
+    if (c.jang?.source === 'KEO' && c.jang.priority < 99) {
+      jangCol = `KEO #${c.jang.priority}`.padEnd(6);
+    } else if (c.jang?.source === 'KEO') {
+      jangCol = 'KEO   ';
+    } else if (c.jang?.source === 'TOANBO') {
+      jangCol = 'TOANBO';
+    }
 
-    dashboard.screeningOnly.slice(0, 15).forEach((c, i) => {
-      out += fmtRow(c, i, false) + '\n';
-    });
-    out += '  * = auto-estimated edge, not analyst-validated\n\n';
-  }
+    // Notes: short reasoning or group
+    let notes = '';
+    if (c.jang?.reasoning) {
+      notes = c.jang.reasoning.substring(0, 50);
+    } else {
+      notes = (c.correlationGroup || '').substring(0, 25);
+    }
 
-  out += '  NEXT STEPS:\n';
-  out += '  → JANG TOP PICKS: Run --smm on these for whale confirmation, then consider entry\n';
-  out += '  → JANG COVERED: Cross-reference with SMM if edge > 10%\n';
-  out += '  → GRIND: Quick capital plays, run --smm for fast confirmation\n';
-  out += '  → SCREENING ONLY: Needs analyst thesis before trading\n';
+    out += `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${fair}  ${alpha}  ${days}  ${jangCol} ${notes}\n`;
+  });
+
+  out += '  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
+  out += '  Fair = Jang fair price | Alpha: +Nc = edge vs fair price, ~Nc = potential profit (market vs Jang thesis)\n';
+  out += '  Sorted: Jang-covered first by alpha, then screening-only by composite\n';
 
   return out;
 }
@@ -1836,6 +1876,12 @@ async function main() {
   };
   writeFileSync('screening_data.json', JSON.stringify(structuredOutput, null, 2));
   console.log('Structured data saved to screening_data.json');
+
+  // Automatically run dashboard after screening
+  console.log('\n╔══════════════════════════════════════════════════════╗');
+  console.log('║  TRADING DASHBOARD — Screening + Jang Analysis       ║');
+  console.log('╚══════════════════════════════════════════════════════╝');
+  await handleDashboard();
 }
 
 main().catch(err => {

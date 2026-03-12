@@ -1,87 +1,59 @@
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║  TRADING DASHBOARD — 2026-03-12                                              ║
-║  Screened: 54 candidates | Jang coverage: 15 markets                     ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-
-  JANG TOP PICKS (highest conviction)
-  ─────────────────────────────────────────────────────────────────────────
-  #   Market                       Bet  Price  Jang%  Edge   Comp  T    Notes
-   1  US x Iran ceasefire by March NO    98c   65%   -33%  89.3  S    KEO #2
-      → Jang nói chiến tranh kéo dài nhiều năm, không kết thúc sớm. Iran vừa có leader m
-      → Risk: Trump bất ngờ đổi ý + Iran chấp nhận deal. Áp lực kinh tế quá lớn khiế
-   2  US x Iran ceasefire by March NO    74c   65%    -9%  80.1  A    KEO #2
-      → Jang nói chiến tranh kéo dài nhiều năm, không kết thúc sớm. Iran vừa có leader m
-      → Risk: Trump bất ngờ đổi ý + Iran chấp nhận deal. Áp lực kinh tế quá lớn khiế
-   3  US x Iran ceasefire by April NO    53c   65%   +12%  51.3  B    KEO #2
-      → Jang nói chiến tranh kéo dài nhiều năm, không kết thúc sớm. Iran vừa có leader m
-      → Risk: Trump bất ngờ đổi ý + Iran chấp nhận deal. Áp lực kinh tế quá lớn khiế
-   4  US x Iran ceasefire by May 3 NO    44c   65%   +21%  49.1  C    KEO #2
-      → Jang nói chiến tranh kéo dài nhiều năm, không kết thúc sớm. Iran vừa có leader m
-      → Risk: Trump bất ngờ đổi ý + Iran chấp nhận deal. Áp lực kinh tế quá lớn khiế
-
-  JANG COVERED (thesis available)
-  ─────────────────────────────────────────────────────────────────────────
-  #   Market                       Bet  Price  Jang%  Edge   Comp  T    Group
-   1  US forces enter Iran by Marc NO    95c    ?      ?   88.4  S    C: Escalatio
-      → Ground invasion là tất yếu. "100,000-500,000 troops". Pattern: shock and awe trư
-   2  Trump announces end of milit NO    95c    ?      ?   88.4  S    I: Trump-Ira
-      → Chiến tranh sẽ kéo dài. "End of military operations" ≠ hòa bình, Trump có thể tu
-   3  Will France, UK, or Germany  NO    90c    ?      ?   81.9  A    C: Escalatio
-      → Châu Âu (Đức, Pháp, Anh) sẽ tham chiến bên Mỹ. Saudi/UAE có thể bị kéo vào.
-   4  US forces enter Iran by Marc NO    75c    ?      ?   80.4  A    C: Escalatio
-      → Ground invasion là tất yếu. "100,000-500,000 troops". Pattern: shock and awe trư
-   5  Will another country strike  NO    73c    ?      ?   79.8  A    C: Escalatio
-      → Nhiều nước sẽ tham chiến.
-   6  Iran leadership change by Ma NO    79c    ?      ?   79.7  A    Z: Other
-      → Mojtaba Khamenei mới lên → ổn định ngắn hạn. Leadership change cần ground invasi
-   7  Will the Iranian regime fall NO    95c    ?    +13%  77.5  A    B: Iran Regi
-      → Regime KHÔNG sụp đổ. Mojtaba Khamenei đã lên. IRGC trung thành. Dân Iran đoàn kế
-   8  Will the U.S. invade Iran by NO    88c    ?      ?   77.5  A    C: Escalatio
-      → Không dự đoán invasion sớm vậy. Pattern của Jang: air campaign → months → ground
-   9  Trump announces end of milit NO    59c    ?      ?   57.6  B    I: Trump-Ira
-      → Chiến tranh sẽ kéo dài. "End of military operations" ≠ hòa bình, Trump có thể tu
-  10  Russia x Ukraine ceasefire b NO    59c    ?    +10%  41.6  C    L: Russia-Uk
-      → Putin kéo dài chiến tranh, không tìm hòa bình. "He will drag it on."
-  11  US forces enter Iran by Dece YES   56c    ?      ?   41.2  C    C: Escalatio
-      → Ground invasion là tất yếu. "100,000-500,000 troops". Pattern: shock and awe trư
-
-  GRIND OPPORTUNITIES (fast-resolve, capital efficiency)
-  ─────────────────────────────────────────────────────────────────────────
-  #   Market                       Bet  Price  Days  Ann.%   Comp  T    Group
-   1  US x Iran meeting by March 1 NO    98c    2d    186%  86.4  S    O: US-Iran D
-   2  Houthi strike on Israel by M NO    84c    2d   1749%  85.6  S    M: Houthi/Ye
-   3  US/Israel strike on Fordow n NO    85c    2d   1728%  85.5  S    D: Nuclear
-   4  Will Iran strike Abqaiq oil  NO    75c   18d    324%  83.8  A    G: Iran Stri
-   5  Will Iran strike Al Zour Ref NO    75c   18d    324%  83.8  A    G: Iran Stri
-   6  Will the US conduct a cybera NO    80c   18d    306%  83.7  A    O: US-Iran D
-   7  Will Iran strike Ghawar Fiel NO    78c   18d    312%  83.7  A    G: Iran Stri
-   8  Will Qatar strike Iran by Ma NO    90c   18d    181%  81.9  A    C: Escalatio
-   9  US announces military suppor NO    89c   18d    182%  81.7  A    O: US-Iran D
-  10  Will Israel or the US target YES   88c   18d    185%  81.3  A    D: Nuclear
-  11  US x Iran meeting by March 3 NO    87c   18d    188%    81  A    O: US-Iran D
-  12  Will UAE strike Iran by Marc NO    83c   18d    195%  80.6  A    C: Escalatio
-  13  Will Saudi Arabia strike Ira NO    82c   18d    199%  80.6  A    C: Escalatio
-  14  Will Iran strike Mina Al-Ahm NO    72c   18d    340%  79.6  A    G: Iran Stri
-  15  Israel x Hamas Ceasefire Pha NO    95c   18d     86%  77.4  A    J: Israel-Ha
-
-  SCREENING ONLY (no Jang coverage — use --smm for validation)
-  ─────────────────────────────────────────────────────────────────────────
-  #   Market                       Bet  Price  Days  Edge*   Comp  T    Group
-   1  Mojtaba Khamenei seen in pub NO    84c    3d   1159%  85.5  S    H: Khamenei/
-   2  Will Kuwait strike Iran by M NO    92c   18d     88%  76.9  A    C: Escalatio
-   3  Mojtaba Khamenei seen in pub NO    95c    0d       ?  70.5  A    H: Khamenei/
-   4  Will Oman strike Iran by Mar NO    98c   18d     21%  69.4  B    C: Escalatio
-   5  Will Clavicular be Iran's ne NO   100c   18d    -17%    66  B    H: Khamenei/
-   6  Will Iran strike Ruwais Refi YES   60c   18d       ?    62  B    G: Iran Stri
-   7  Mojtaba Khamenei seen in pub NO    63c   18d       ?  61.9  B    H: Khamenei/
-   8  Ukraine officially agrees to NO    85c  109d       ?  53.5  B    L: Russia-Uk
-   9  Netanyahu out by June 30?    NO    85c  109d       ?  49.5  C    N: Netanyahu
-  10  Israel x Hamas ceasefire can NO    71c  109d       ?  45.7  C    J: Israel-Ha
-  11  Masoud Pezeshkian out by Dec NO    53c  293d       ?  37.3  C    H: Khamenei/
-  * = auto-estimated edge, not analyst-validated
-
-  NEXT STEPS:
-  → JANG TOP PICKS: Run --smm on these for whale confirmation, then consider entry
-  → JANG COVERED: Cross-reference with SMM if edge > 10%
-  → GRIND: Quick capital plays, run --smm for fast confirmation
-  → SCREENING ONLY: Needs analyst thesis before trading
+  TRADING DASHBOARD — 2026-03-12  |  52 markets  |  Jang: 18 covered
+  ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════
+  #   Market                                       Bet  Price  Fair  Alpha  Days  Jang   Notes
+  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   1  Will France, UK, or Germany strike Iran by Ma YES  10c          ~90c   18d  TOANBO Châu Âu (Đức, Pháp, Anh) sẽ tham chiến bên Mỹ. Sau
+   2  Houthi strike on Israel by March 15, 2026?    YES  13c          ~87c    2d  TOANBO Iran dẫn dắt thánh chiến Shia toàn cầu, proxy atta
+   3  Trump announces end of military operations ag NO   59c          ~41c   18d  TOANBO Chiến tranh sẽ kéo dài. "End of military operation
+   4  US forces enter Iran by March 14?             YES   6c   45c    +39c    1d  TOANBO Ground invasion là tất yếu. "100,000-500,000 troop
+   5  Will the U.S. invade Iran by March 31?        YES  12c   45c    +33c   18d  KEO #5 Đây là core prediction của Jang — ground invasion 
+   6  Will another country strike Iran by March 31? NO   72c          ~28c   18d  TOANBO Nhiều nước sẽ tham chiến.
+   7  US x Iran ceasefire by May 31?                NO   44c   65c    +21c   79d  KEO #2 Jang nói chiến tranh kéo dài nhiều năm, không kết 
+   8  Iran leadership change by March 31?           NO   80c          ~20c   18d  TOANBO Mojtaba Khamenei mới lên → ổn định ngắn hạn. Leade
+   9  US forces enter Iran by March 31?             YES  26c   45c    +19c   18d  TOANBO Ground invasion là tất yếu. "100,000-500,000 troop
+  10  US/Israel strike on Fordow nuclear facility b NO   84c          ~16c    2d  TOANBO Mục tiêu là hạ tầng hạt nhân Iran. Mỹ sẽ phá hủy k
+  11  US x Iran ceasefire by April 30?              NO   53c   65c    +12c   48d  KEO #2 Jang nói chiến tranh kéo dài nhiều năm, không kết 
+  12  Russia x Ukraine ceasefire by end of 2026?    NO   59c   69c    +10c  294d  TOANBO Putin kéo dài chiến tranh, không tìm hòa bình. "He
+  13  Trump announces end of military operations ag NO   95c           ~5c    2d  TOANBO Chiến tranh sẽ kéo dài. "End of military operation
+  14  Will the Iranian regime fall by June 30?      NO   78c   80c     +2c  109d  KEO #4 Khamenei chết nhưng Mojtaba đã lên thay ngay — suc
+  15  US x Iran ceasefire by March 31?              NO   76c   65c    -11c   18d  KEO #2 Jang nói chiến tranh kéo dài nhiều năm, không kết 
+  16  US forces enter Iran by December 31?          YES  56c   45c    -11c  293d  TOANBO Ground invasion là tất yếu. "100,000-500,000 troop
+  17  Will the Iranian regime fall by March 31?     NO   95c   80c    -15c   18d  KEO #4 Khamenei chết nhưng Mojtaba đã lên thay ngay — suc
+  18  US x Iran ceasefire by March 15?              NO   98c   65c    -33c    2d  KEO #2 Jang nói chiến tranh kéo dài nhiều năm, không kết 
+  19  US x Iran meeting by March 15, 2026?          NO   98c                  2d         O: US-Iran Diplomacy
+  20  Mojtaba Khamenei seen in public by March 16?  NO   86c                  3d         H: Khamenei/Leadership
+  21  Will Iran strike Abqaiq oil processing facili NO   76c                 18d         G: Iran Strikes
+  22  Will Iran strike Al Zour Refinery by March 31 NO   75c                 18d         G: Iran Strikes
+  23  Will the US conduct a cyberattack on Iran by  NO   81c                 18d         O: US-Iran Diplomacy
+  24  Will Iran strike Ghawar Field by March 31?    NO   78c                 18d         G: Iran Strikes
+  25  Will Qatar strike Iran by March 31?           NO   90c                 18d         C: Escalation
+  26  US announces military support of Kurds in Ira NO   90c                 18d         O: US-Iran Diplomacy
+  27  Will Israel or the US target Isfahan Nuclear  YES  88c                 18d         D: Nuclear
+  28  US x Iran meeting by March 31, 2026?          NO   87c                 18d         O: US-Iran Diplomacy
+  29  Will UAE strike Iran by March 31?             NO   83c                 18d         C: Escalation
+  30  Will Saudi Arabia strike Iran by March 31?    NO   82c                 18d         C: Escalation
+  31  Will Iran strike Mina Al-Ahmadi Refinery by M NO   72c                 18d         G: Iran Strikes
+  32  Israel x Hamas Ceasefire Phase II by March 31 NO   95c                 18d         J: Israel-Hamas Ceasefire
+  33  Will Iran strike Dimona by March 31?          NO   94c                 18d         G: Iran Strikes
+  34  Will Turkey strike Iran by March 31?          NO   94c                 18d         C: Escalation
+  35  Masoud Pezeshkian out by March 31?            NO   87c                 18d         H: Khamenei/Leadership
+  36  Will UK strike Iran by March 31?              NO   93c                 18d         C: Escalation
+  37  Will Bahrain strike Iran by March 31?         NO   93c                 18d         C: Escalation
+  38  Will any E.U. country strike Iran by March 31 NO   92c                 18d         C: Escalation
+  39  Israel x Syria security agreement by March 31 NO   93c                 18d         Z: Other
+  40  Will Trump declare war on Iran by March 31, 2 NO   93c                 18d         I: Trump-Iran Ops
+  41  Will Kuwait strike Iran by March 31?          NO   92c                 18d         C: Escalation
+  42  Will Israel launch a major ground offensive i YES  74c                 18d         C: Escalation
+  43  US-Iran nuclear deal by March 31?             NO   95c                 18d         D: Nuclear
+  44  Israel x Hamas ceasefire cancelled by March 3 NO   94c                 18d         J: Israel-Hamas Ceasefire
+  45  Netanyahu out by March 31?                    NO   94c                 18d         N: Netanyahu/Israel Polit
+  46  Will Oman strike Iran by March 31?            NO   98c                 18d         C: Escalation
+  47  Will Clavicular be Iran's next Supreme Leader NO  100c                 18d         H: Khamenei/Leadership
+  48  Will Iran strike Ruwais Refinery by March 31? NO   53c                 18d         G: Iran Strikes
+  49  Ukraine officially agrees to a US backed ceas NO   85c                109d         L: Russia-Ukraine
+  50  Netanyahu out by June 30?                     NO   85c                109d         N: Netanyahu/Israel Polit
+  51  Israel x Hamas ceasefire cancelled by June 30 NO   74c                109d         J: Israel-Hamas Ceasefire
+  52  Masoud Pezeshkian out by December 31?         NO   53c                293d         H: Khamenei/Leadership
+  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Fair = Jang fair price | Alpha: +Nc = edge vs fair price, ~Nc = potential profit (market vs Jang thesis)
+  Sorted: Jang-covered first by alpha, then screening-only by composite
