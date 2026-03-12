@@ -13,6 +13,7 @@
  *   node screener.mjs --smm "ceasefire march 31"           # SMM report for a specific market
  *   node screener.mjs --smm 3            # SMM report for candidate #3 from last screening
  *   node screener.mjs --smm-all          # SMM reports for all S-TIER and A-TIER candidates
+ *   node screener.mjs --dashboard        # Unified dashboard: screening + Jang analysis
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
@@ -705,6 +706,364 @@ async function interactiveProbability(candidates) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// JANG ANALYSIS PARSER
+// ═══════════════════════════════════════════════════════════════════════
+
+const JANG_DIR = 'C:/Users/Surface/Downloads/Telegram Desktop/Politics Prediction copy/Politics Prediction copy/Prediction Lead';
+const JANG_KEO_FILE = `${JANG_DIR}/11-POLYMARKET-KEO.md`;
+const JANG_TOANBO_FILE = `${JANG_DIR}/12-POLYMARKET-TOAN-BO.md`;
+
+function parseJangKeo() {
+  if (!existsSync(JANG_KEO_FILE)) return [];
+  const content = readFileSync(JANG_KEO_FILE, 'utf8');
+  const entries = [];
+
+  // Split by --- separators, each block is a pick
+  const blocks = content.split(/\n---\n/);
+
+  for (const block of blocks) {
+    // Skip header/instruction blocks
+    if (!block.includes('**Market:**') && !block.includes('**Jang estimate:**')) continue;
+
+    const entry = { source: 'KEO', priority: 0 };
+
+    // Extract pick number (KEO SỐ 1, KEO SỐ 2, etc.)
+    const pickMatch = block.match(/KÈO SỐ (\d+)/);
+    if (pickMatch) entry.priority = parseInt(pickMatch[1]);
+
+    // Also handle "CÁC KÈO KHÁC" section
+    if (block.includes('CÁC KÈO KHÁC')) entry.priority = 99;
+
+    // Extract market name
+    const marketMatch = block.match(/\*\*Market:\*\*\s*(.+)/);
+    if (marketMatch) entry.marketName = marketMatch[1].trim();
+
+    // Extract link/slug
+    const linkMatch = block.match(/polymarket\.com\/event\/([^\s\n*]+)/);
+    if (linkMatch) entry.slug = linkMatch[1].trim();
+
+    // Extract Jang estimate
+    const estMatch = block.match(/Jang estimate.*?~?(\d+)%\s*(YES|NO)/i);
+    if (estMatch) {
+      entry.jangPct = parseInt(estMatch[1]);
+      entry.jangSide = estMatch[2].toUpperCase();
+    }
+
+    // Also handle "tức ~65% NO" pattern
+    const altEstMatch = block.match(/tức\s*~?(\d+)%\s*(YES|NO)/i);
+    if (altEstMatch && !entry.jangPct) {
+      entry.jangPct = parseInt(altEstMatch[1]);
+      entry.jangSide = altEstMatch[2].toUpperCase();
+    }
+
+    // Extract edge
+    const edgeMatch = block.match(/Edge:.*?\+(\d+)%/i);
+    if (edgeMatch) entry.jangEdge = parseInt(edgeMatch[1]);
+
+    // Extract direction
+    const dirMatch = block.match(/Mua (YES|NO)/i);
+    if (dirMatch) entry.direction = dirMatch[1].toUpperCase();
+
+    // If we have jangSide but no direction, infer it
+    if (!entry.direction && entry.jangSide) {
+      entry.direction = entry.jangSide;
+    }
+
+    // Extract reasoning (bullet points after "Tại sao:")
+    const whyMatch = block.match(/\*\*Tại sao.*?\*\*[:\s]*\n([\s\S]*?)(?=\n\*\*Rủi ro|$)/);
+    if (whyMatch) {
+      const bullets = whyMatch[1].split('\n')
+        .filter(l => l.trim().startsWith('-'))
+        .map(l => l.trim().replace(/^-\s*/, ''))
+        .slice(0, 3);
+      entry.reasoning = bullets.join('. ');
+    }
+
+    // Extract risk
+    const riskMatch = block.match(/\*\*Rủi ro:\*\*\s*(.+)/);
+    if (riskMatch) entry.risk = riskMatch[1].trim();
+
+    if (entry.marketName || entry.slug) {
+      entries.push(entry);
+    }
+  }
+
+  return entries;
+}
+
+function parseJangToanBo() {
+  if (!existsSync(JANG_TOANBO_FILE)) return [];
+  const content = readFileSync(JANG_TOANBO_FILE, 'utf8');
+  const entries = [];
+
+  // Split by ### sections
+  const sections = content.split(/(?=### [A-Z]\d+\.)/);
+
+  for (const section of sections) {
+    const headerMatch = section.match(/### ([A-Z]\d+)\.\s*(.+)/);
+    if (!headerMatch) continue;
+
+    const entry = {
+      source: 'TOANBO',
+      sectionId: headerMatch[1],
+      sectionTitle: headerMatch[2].trim(),
+      priority: 0,
+    };
+
+    // Extract all event slugs
+    const slugMatches = [...section.matchAll(/polymarket\.com\/event\/([^\s\n*)+]+)/g)];
+    entry.slugs = slugMatches.map(m => m[1].replace(/[)]+$/, ''));
+    entry.slug = entry.slugs[0] || '';
+
+    // Extract Jang line
+    const jangMatch = section.match(/\*\*Jang:\*\*\s*(.+)/);
+    if (jangMatch) entry.reasoning = jangMatch[1].trim();
+
+    // Extract AI line for additional context
+    const aiMatch = section.match(/\*\*AI:\*\*\s*(.+)/);
+    if (aiMatch) entry.aiNote = aiMatch[1].trim();
+
+    // Try to extract percentage estimates from Jang line
+    const pctMatch = entry.reasoning?.match(/~?(\d+)%\s*(YES|NO|ceasefire|regime|invasion)/i);
+    if (pctMatch) {
+      entry.jangPct = parseInt(pctMatch[1]);
+    }
+
+    // Extract direction from AI line edge mentions
+    const edgeFromAI = entry.aiNote?.match(/edge\s*~?\+?(\d+)%/i);
+    if (edgeFromAI) entry.jangEdge = parseInt(edgeFromAI[1]);
+
+    // Extract direction from explicit YES/NO mentions in reasoning
+    if (entry.reasoning) {
+      const r = entry.reasoning;
+      // Only match explicit "Mua YES/NO" or "→ YES/NO" or "bet YES/NO" patterns
+      const dirFromReasoning = r.match(/\b(?:mua|bet|chọn|pick)\s+(YES|NO)\b/i)
+        || r.match(/→\s*(YES|NO)\b/i);
+      if (dirFromReasoning) entry.direction = dirFromReasoning[1].toUpperCase();
+    }
+
+    if (entry.slug || entry.sectionTitle) {
+      entries.push(entry);
+    }
+  }
+
+  return entries;
+}
+
+function matchJangToCandidate(candidate, jangEntries) {
+  const cSlug = (candidate.slug || '').toLowerCase();
+  const cQuestion = (candidate.question || '').toLowerCase();
+  const cEventSlug = (candidate.eventSlug || '').toLowerCase();
+
+  for (const jang of jangEntries) {
+    // Match by slug
+    if (jang.slug && cSlug && cSlug.includes(jang.slug.toLowerCase())) return jang;
+    if (jang.slug && cEventSlug && cEventSlug.includes(jang.slug.toLowerCase())) return jang;
+
+    // Match by any slug in the list (TOANBO has multiple)
+    if (jang.slugs) {
+      for (const s of jang.slugs) {
+        if (cSlug && cSlug.includes(s.toLowerCase())) return jang;
+        if (cEventSlug && cEventSlug.includes(s.toLowerCase())) return jang;
+      }
+    }
+
+    // Fuzzy match by market name keywords (strict: 4+ char words, need 3+ matches)
+    if (jang.marketName) {
+      const stopWords = ['will', 'the', 'before', 'after', 'from', 'this', 'that', 'with', 'have', 'been'];
+      const jWords = jang.marketName.toLowerCase().split(/\s+/).filter(w => w.length > 4 && !stopWords.includes(w));
+      const matchCount = jWords.filter(w => cQuestion.includes(w)).length;
+      if (jWords.length > 0 && matchCount >= 3) return jang;
+    }
+  }
+
+  return null;
+}
+
+function buildDashboard(candidates, jangEntries) {
+  // Attach Jang data to candidates
+  const enriched = candidates.map(c => {
+    const jang = matchJangToCandidate(c, jangEntries);
+    const prices = c.prices || {};
+    let betSide = c.grindDetails?.side || (prices.no > prices.yes ? 'NO' : 'YES');
+    let betPrice = betSide === 'YES' ? prices.yes : prices.no;
+
+    let jangEdge = null;
+    // Override betSide with Jang's direction when available
+    if (jang?.direction) {
+      betSide = jang.direction;
+      betPrice = betSide === 'YES' ? prices.yes : prices.no;
+    }
+
+    if (jang?.jangPct != null && jang?.direction) {
+      // jangPct is the probability for jangSide (e.g., 35% YES)
+      // Convert to win% on direction's side (e.g., if jangSide=YES @ 35%, direction=NO → win%=65%)
+      const jangWinPct = (jang.jangSide && jang.jangSide !== jang.direction)
+        ? (100 - jang.jangPct)
+        : jang.jangPct;
+      const directionPrice = jang.direction === 'YES' ? (prices.yes || 0) : (prices.no || 0);
+      jangEdge = jangWinPct - Math.round(directionPrice * 100);
+    } else if (jang?.jangEdge) {
+      jangEdge = jang.jangEdge;
+    }
+
+    return {
+      ...c,
+      betSide,
+      betPrice,
+      jang,
+      jangEdge,
+    };
+  });
+
+  // Split into sections
+  const jangPicks = enriched.filter(c => c.jang?.source === 'KEO' && c.jang.priority < 99);
+  const jangCovered = enriched.filter(c => c.jang?.source === 'TOANBO' || (c.jang?.source === 'KEO' && c.jang.priority >= 99));
+  const grindOnly = enriched.filter(c => !c.jang && c.tag === 'GRIND');
+  const screeningOnly = enriched.filter(c => !c.jang && c.tag !== 'GRIND');
+
+  // Sort each section
+  jangPicks.sort((a, b) => (a.jang?.priority || 99) - (b.jang?.priority || 99));
+  jangCovered.sort((a, b) => (b.composite || 0) - (a.composite || 0));
+  grindOnly.sort((a, b) => (b.composite || 0) - (a.composite || 0));
+  screeningOnly.sort((a, b) => (b.composite || 0) - (a.composite || 0));
+
+  // Dedup: if a market appears in jangPicks, remove from jangCovered
+  const pickIds = new Set(jangPicks.map(c => c.id));
+  const dedupedCovered = jangCovered.filter(c => !pickIds.has(c.id));
+
+  return { jangPicks, jangCovered: dedupedCovered, grindOnly, screeningOnly, total: enriched.length };
+}
+
+function formatDashboard(dashboard) {
+  const reportDate = TODAY.toISOString().split('T')[0];
+  const jangCount = dashboard.jangPicks.length + dashboard.jangCovered.length;
+
+  let out = '';
+  out += '╔═══════════════════════════════════════════════════════════════════════════════╗\n';
+  out += `║  TRADING DASHBOARD — ${reportDate}                                              ║\n`;
+  out += `║  Screened: ${dashboard.total} candidates | Jang coverage: ${jangCount} markets                     ║\n`;
+  out += '╚═══════════════════════════════════════════════════════════════════════════════╝\n\n';
+
+  function fmtRow(c, i, showJang = true) {
+    const q = (c.question || '').substring(0, 28).padEnd(28);
+    const bet = (c.betSide || '?').padEnd(3);
+    const price = c.betPrice ? `${(c.betPrice * 100).toFixed(0)}c`.padStart(5) : '    ?';
+    const comp = String(c.composite || 0).padStart(5);
+    const tier = (c.tier || getTier(c.composite || 0)).substring(0, 1);
+
+    if (showJang && c.jang) {
+      // Show win% on the bet side (flip if jangSide != direction)
+      const winPct = c.jang.jangPct != null
+        ? ((c.jang.jangSide && c.jang.jangSide !== c.jang.direction) ? (100 - c.jang.jangPct) : c.jang.jangPct)
+        : null;
+      const jPct = winPct != null ? `${winPct}%`.padStart(4) : '  ? ';
+      const edge = c.jangEdge != null ? `${c.jangEdge > 0 ? '+' : ''}${c.jangEdge}%`.padStart(5) : '   ? ';
+      const note = c.jang.priority && c.jang.priority < 99 ? `KEO #${c.jang.priority}` : (c.correlationGroup || '').substring(0, 12);
+      return `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${jPct}  ${edge} ${comp}  ${tier}    ${note}`;
+    } else {
+      const days = c.daysToEnd != null ? `${c.daysToEnd}d`.padStart(4) : '   ?';
+      const ann = c.grindDetails?.annualized ? `${c.grindDetails.annualized}%`.padStart(6) : '     ?';
+      const group = (c.correlationGroup || '').substring(0, 12);
+      return `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${days}  ${ann} ${comp}  ${tier}    ${group}`;
+    }
+  }
+
+  // Section 1: Jang Top Picks
+  if (dashboard.jangPicks.length > 0) {
+    out += '  JANG TOP PICKS (highest conviction)\n';
+    out += '  ─────────────────────────────────────────────────────────────────────────\n';
+    out += '  #   Market                       Bet  Price  Jang%  Edge   Comp  T    Notes\n';
+
+    dashboard.jangPicks.forEach((c, i) => {
+      out += fmtRow(c, i) + '\n';
+      if (c.jang?.reasoning) {
+        const reason = c.jang.reasoning.substring(0, 80);
+        out += `      → ${reason}\n`;
+      }
+      if (c.jang?.risk) {
+        const risk = c.jang.risk.substring(0, 70);
+        out += `      → Risk: ${risk}\n`;
+      }
+    });
+    out += '\n';
+  }
+
+  // Section 2: Jang Covered
+  if (dashboard.jangCovered.length > 0) {
+    out += '  JANG COVERED (thesis available)\n';
+    out += '  ─────────────────────────────────────────────────────────────────────────\n';
+    out += '  #   Market                       Bet  Price  Jang%  Edge   Comp  T    Group\n';
+
+    dashboard.jangCovered.forEach((c, i) => {
+      out += fmtRow(c, i) + '\n';
+      if (c.jang?.reasoning) {
+        const reason = c.jang.reasoning.substring(0, 80);
+        out += `      → ${reason}\n`;
+      }
+    });
+    out += '\n';
+  }
+
+  // Section 3: GRIND
+  if (dashboard.grindOnly.length > 0) {
+    out += '  GRIND OPPORTUNITIES (fast-resolve, capital efficiency)\n';
+    out += '  ─────────────────────────────────────────────────────────────────────────\n';
+    out += '  #   Market                       Bet  Price  Days  Ann.%   Comp  T    Group\n';
+
+    dashboard.grindOnly.slice(0, 15).forEach((c, i) => {
+      out += fmtRow(c, i, false) + '\n';
+    });
+    out += '\n';
+  }
+
+  // Section 4: Screening Only
+  if (dashboard.screeningOnly.length > 0) {
+    out += '  SCREENING ONLY (no Jang coverage — use --smm for validation)\n';
+    out += '  ─────────────────────────────────────────────────────────────────────────\n';
+    out += '  #   Market                       Bet  Price  Days  Edge*   Comp  T    Group\n';
+
+    dashboard.screeningOnly.slice(0, 15).forEach((c, i) => {
+      out += fmtRow(c, i, false) + '\n';
+    });
+    out += '  * = auto-estimated edge, not analyst-validated\n\n';
+  }
+
+  out += '  NEXT STEPS:\n';
+  out += '  → JANG TOP PICKS: Run --smm on these for whale confirmation, then consider entry\n';
+  out += '  → JANG COVERED: Cross-reference with SMM if edge > 10%\n';
+  out += '  → GRIND: Quick capital plays, run --smm for fast confirmation\n';
+  out += '  → SCREENING ONLY: Needs analyst thesis before trading\n';
+
+  return out;
+}
+
+async function handleDashboard() {
+  if (!existsSync('screening_data.json')) {
+    console.log('  ERROR: No screening_data.json found. Run screening first: node screener.mjs');
+    process.exit(1);
+  }
+
+  const data = JSON.parse(readFileSync('screening_data.json', 'utf8'));
+  const candidates = data.candidates || [];
+
+  console.log('  Loading Jang analysis...');
+  const keoEntries = parseJangKeo();
+  const toanBoEntries = parseJangToanBo();
+  const allJang = [...keoEntries, ...toanBoEntries];
+  console.log(`  Parsed: ${keoEntries.length} picks from KEO + ${toanBoEntries.length} sections from TOAN BO`);
+
+  const dashboard = buildDashboard(candidates, allJang);
+  const output = formatDashboard(dashboard);
+
+  console.log(output);
+
+  const reportFile = `DASHBOARD_${TODAY.toISOString().split('T')[0]}.md`;
+  writeFileSync(reportFile, output);
+  console.log(`\n  Dashboard saved to ${reportFile}`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // SMM: SMART MONEY METRICS (Automated via Data API)
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -1151,6 +1510,15 @@ async function handleSMMCommand(args) {
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // Handle dashboard command
+  if (args.includes('--dashboard')) {
+    console.log('╔══════════════════════════════════════════════════════╗');
+    console.log('║  POLYMARKET TRADING DASHBOARD — Screening + Jang     ║');
+    console.log('╚══════════════════════════════════════════════════════╝');
+    await handleDashboard();
+    return;
+  }
 
   // Handle SMM commands before screening
   if (args.includes('--smm') || args.includes('--smm-all')) {
