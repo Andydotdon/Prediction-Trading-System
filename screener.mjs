@@ -1003,36 +1003,30 @@ function formatDashboard(dashboard) {
       alpha = 100 - priceInCents;
     }
 
-    return { ...c, valueGap, alpha, hasJang };
+    // Conviction = composite (market quality) + alpha bonus (Jang edge)
+    // Alpha ranges roughly -40 to +90 cents. Scale to bonus of -15 to +30 points.
+    // This keeps composite as the base while rewarding Jang disagreement.
+    const alphaBonus = alpha != null ? Math.max(-15, Math.min(30, alpha * 0.33)) : 0;
+    const conviction = Math.round(Math.min(100, (c.composite || 0) + alphaBonus));
+
+    return { ...c, valueGap, alpha, hasJang, conviction };
   });
 
-  // Sort: Jang-covered first by alpha desc, then non-Jang by composite
-  all.sort((a, b) => {
-    // Jang-covered always above non-Jang
-    if (a.hasJang && !b.hasJang) return -1;
-    if (!a.hasJang && b.hasJang) return 1;
-    // Both Jang-covered: sort by alpha desc (highest disagreement/edge first)
-    if (a.hasJang && b.hasJang) {
-      if (a.alpha != null && b.alpha != null) return b.alpha - a.alpha;
-      if (a.alpha != null) return -1;
-      if (b.alpha != null) return 1;
-      return (b.composite || 0) - (a.composite || 0);
-    }
-    // Both non-Jang: sort by composite
-    return (b.composite || 0) - (a.composite || 0);
-  });
+  // Sort by conviction score descending
+  all.sort((a, b) => (b.conviction || 0) - (a.conviction || 0));
 
   let out = '';
   out += `  TRADING DASHBOARD — ${reportDate}  |  ${all.length} markets  |  Jang: ${jangCount} covered\n`;
   out += '  ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════\n';
-  out += '  #   Market                                       Bet  Price  Fair  Alpha  Days  Jang   Notes\n';
-  out += '  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
+  out += '  #   Market                                       Bet  Price  Fair  Alpha  Days  Conv  Jang   Notes\n';
+  out += '  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
 
   all.forEach((c, i) => {
     const q = (c.question || '').substring(0, 45).padEnd(45);
     const bet = (c.betSide || '?').padEnd(3);
     const price = c.betPrice ? `${(c.betPrice * 100).toFixed(0)}c`.padStart(4) : '   ?';
     const days = c.daysToEnd != null ? `${c.daysToEnd}d`.padStart(4) : '   ?';
+    const conv = String(c.conviction || 0).padStart(3);
 
     // Fair price column
     let fair = '    ';
@@ -1043,10 +1037,8 @@ function formatDashboard(dashboard) {
     // Alpha column: edge vs fair price, or potential profit if market disagrees with Jang
     let alpha = '      ';
     if (c.valueGap != null) {
-      // Has fair price: show exact gap
       alpha = c.valueGap > 0 ? `+${c.valueGap}c`.padStart(6) : `${c.valueGap}c`.padStart(6);
     } else if (c.hasJang && c.alpha != null) {
-      // No fair price but Jang thesis: show potential profit with ~ prefix
       alpha = `~${c.alpha}c`.padStart(6);
     }
 
@@ -1063,17 +1055,17 @@ function formatDashboard(dashboard) {
     // Notes: short reasoning or group
     let notes = '';
     if (c.jang?.reasoning) {
-      notes = c.jang.reasoning.substring(0, 50);
+      notes = c.jang.reasoning.substring(0, 45);
     } else {
       notes = (c.correlationGroup || '').substring(0, 25);
     }
 
-    out += `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${fair}  ${alpha}  ${days}  ${jangCol} ${notes}\n`;
+    out += `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${fair}  ${alpha}  ${days}  ${conv}  ${jangCol} ${notes}\n`;
   });
 
-  out += '  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
-  out += '  Fair = Jang fair price | Alpha: +Nc = edge vs fair price, ~Nc = potential profit (market vs Jang thesis)\n';
-  out += '  Sorted: Jang-covered first by alpha, then screening-only by composite\n';
+  out += '  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
+  out += '  Conv = market quality + Jang alpha bonus (positive alpha boosts, negative alpha penalizes)\n';
+  out += '  Alpha: +Nc = edge vs fair | ~Nc = potential profit (market vs Jang thesis) | blank = no Jang\n';
 
   return out;
 }
