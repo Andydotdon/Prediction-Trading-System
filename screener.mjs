@@ -1005,8 +1005,13 @@ function formatDashboard(dashboard) {
 
     // Conviction = composite (market quality) + alpha bonus (Jang edge)
     // Alpha ranges roughly -40 to +90 cents. Scale to bonus of -15 to +30 points.
-    // This keeps composite as the base while rewarding Jang disagreement.
-    const alphaBonus = alpha != null ? Math.max(-15, Math.min(30, alpha * 0.33)) : 0;
+    // Time decay: Jang's thesis needs time to play out. Markets expiring in <7 days
+    // get reduced alpha because the thesis can't materialize that fast.
+    // Full alpha at 30+ days, linearly reduced below that, near-zero at 1-2 days.
+    const days = c.daysToEnd != null ? c.daysToEnd : 30;
+    const timeDecay = Math.min(1, days / 30);
+    const rawBonus = alpha != null ? Math.max(-15, Math.min(30, alpha * 0.33)) : 0;
+    const alphaBonus = rawBonus * timeDecay;
     const conviction = Math.round(Math.min(100, (c.composite || 0) + alphaBonus));
 
     return { ...c, valueGap, alpha, hasJang, conviction };
