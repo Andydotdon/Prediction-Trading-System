@@ -406,24 +406,33 @@ function scoreResolution(market) {
 // LAYER 4: CORRELATION
 // ═══════════════════════════════════════════════════════════════════════
 
-const CORRELATION_GROUPS = {
-  'A: US-Iran Ceasefire': ['ceasefire', 'conflict ends'],
-  'B: Iran Regime Change': ['regime fall', 'regime change', 'pahlavi'],
-  'C: Escalation': ['strike iran', 'forces enter', 'invade', 'ground offensive', 'annex'],
-  'D: Nuclear': ['nuclear', 'enrichment', 'uranium', 'strait of hormuz'],
-  'E: Israel-Hamas': ['hamas', 'gaza'],
-  'F: Lebanon': ['lebanon', 'hezbollah'],
-  'G: Iran Strikes': ['iran strike', 'iran strikes'],
-};
+const CORRELATION_GROUPS = [
+  // Order matters — first match wins. More specific patterns go first.
+  { id: 'G: Iran Strikes', patterns: [/iran strike/i, /iran strikes/i, /iran.*strike.*(?:abqaiq|ghawar|dimona|refinery|ruwais|ahmadi|zour)/i] },
+  { id: 'H: Khamenei/Leadership', patterns: [/khamenei/i, /supreme leader/i, /mojtaba/i, /pezeshkian/i] },
+  { id: 'I: Trump-Iran Ops', patterns: [/trump.*(?:military|operations|war|declare)/i, /end of military/i, /trump.*iran/i] },
+  { id: 'A: US-Iran Ceasefire', patterns: [/us\s*x?\s*iran\s*ceasefire/i, /iran.*ceasefire/i, /conflict ends.*iran/i] },
+  { id: 'J: Israel-Hamas Ceasefire', patterns: [/israel.*hamas.*ceasefire/i, /hamas.*ceasefire/i, /ceasefire.*phase/i] },
+  { id: 'K: Gaza Intervention', patterns: [/intervention.*gaza/i, /gaza.*intervention/i] },
+  { id: 'E: Israel-Hamas', patterns: [/hamas/i, /gaza/i] },
+  { id: 'L: Russia-Ukraine', patterns: [/russia/i, /ukraine/i, /nato/i] },
+  { id: 'B: Iran Regime Change', patterns: [/regime.*fall/i, /regime.*change/i, /pahlavi/i, /regime/i] },
+  { id: 'C: Escalation', patterns: [/strike iran/i, /forces enter/i, /invade.*iran/i, /ground offensive/i, /annex/i, /country strike/i] },
+  { id: 'D: Nuclear', patterns: [/nuclear/i, /enrichment/i, /uranium/i, /fordow/i, /strait of hormuz/i] },
+  { id: 'F: Lebanon', patterns: [/lebanon/i, /hezbollah/i] },
+  { id: 'M: Houthi/Yemen', patterns: [/houthi/i, /yemen/i] },
+  { id: 'N: Netanyahu/Israel Politics', patterns: [/netanyahu/i, /israeli.*election/i, /knesset/i] },
+  { id: 'O: US-Iran Diplomacy', patterns: [/us.*iran.*meeting/i, /iran.*deal/i, /iran.*negotiat/i, /cyberattack.*iran/i, /military support.*kurd/i] },
+];
 
 function assignCorrelationGroup(market) {
-  const q = (market.question || '').toLowerCase();
-  const eventTitle = (market._eventTitle || '').toLowerCase();
+  const q = market.question || '';
+  const eventTitle = market._eventTitle || '';
   const combined = q + ' ' + eventTitle;
 
-  for (const [group, keywords] of Object.entries(CORRELATION_GROUPS)) {
-    if (keywords.some(k => combined.includes(k))) {
-      return group;
+  for (const group of CORRELATION_GROUPS) {
+    if (group.patterns.some(p => p.test(combined))) {
+      return group.id;
     }
   }
   return 'Z: Other';
@@ -557,48 +566,68 @@ function daysBetween(d1, d2) {
 }
 
 function daysToResolution(market) {
-  // Try endDateIso first, then endDate
-  let end = market.endDateIso || market.endDate;
+  const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 
-  // If no end date, try to extract from question text
-  if (!end) {
-    const q = market.question || '';
-    // Match patterns like "by March 31?" "by June 30?" "by April 30?"
-    const dateMatch = q.match(/by\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
-    if (dateMatch) {
-      const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
-      const month = monthNames.indexOf(dateMatch[1].toLowerCase());
-      const day = parseInt(dateMatch[2]);
-      // Assume current year or next year
-      let year = TODAY.getFullYear();
-      const candidate = new Date(year, month, day);
-      if (candidate < TODAY) year++; // If date already passed this year, assume next year
-      end = new Date(year, month, day).toISOString();
-    }
-    // Match patterns like "on March 10?" "on March 14?"
-    if (!end) {
-      const onMatch = q.match(/on\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
-      if (onMatch) {
-        const monthNames = ['january','february','march','april','may','june','july','august','september','october','november','december'];
-        const month = monthNames.indexOf(onMatch[1].toLowerCase());
-        const day = parseInt(onMatch[2]);
-        let year = TODAY.getFullYear();
-        const candidate = new Date(year, month, day);
-        if (candidate < TODAY) year++;
-        end = new Date(year, month, day).toISOString();
-      }
-    }
-    // Match "before 2027" or "in 2026"
-    if (!end) {
-      const yearMatch = q.match(/(?:before|in|by)\s+(\d{4})/i);
-      if (yearMatch) {
-        end = `${yearMatch[1]}-12-31`;
-      }
+  // Helper: parse a date string or components into days from today
+  function parseEndDate(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    return Math.max(0, daysBetween(TODAY, d));
+  }
+
+  function fromMonthDay(monthStr, dayStr, yearStr) {
+    const month = monthNames.indexOf(monthStr.toLowerCase());
+    if (month === -1) return null;
+    const day = parseInt(dayStr);
+    let year = yearStr ? parseInt(yearStr) : TODAY.getFullYear();
+    const candidate = new Date(year, month, day);
+    if (!yearStr && candidate < TODAY) year++;
+    return Math.max(0, daysBetween(TODAY, new Date(year, month, day)));
+  }
+
+  // 1. Try API end date fields
+  const apiEnd = parseEndDate(market.endDateIso || market.endDate);
+
+  // 2. Try to extract from question text
+  const q = (market.question || '') + ' ' + (market._eventTitle || '');
+  let textEnd = null;
+
+  // "by March 31, 2026" or "by March 31?"
+  const byMatch = q.match(/by\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?/i);
+  if (byMatch) {
+    textEnd = fromMonthDay(byMatch[1], byMatch[2], byMatch[3]);
+  }
+
+  // "on March 10?" or "on March 14?"
+  if (textEnd === null) {
+    const onMatch = q.match(/on\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?/i);
+    if (onMatch) {
+      textEnd = fromMonthDay(onMatch[1], onMatch[2], onMatch[3]);
     }
   }
 
-  if (!end) return 365;
-  return Math.max(0, daysBetween(TODAY, new Date(end)));
+  // "by end of 2026" or "before 2027" or "in 2026"
+  if (textEnd === null) {
+    const yearMatch = q.match(/(?:before|in|by|by end of)\s+(\d{4})/i);
+    if (yearMatch) {
+      textEnd = parseEndDate(`${yearMatch[1]}-12-31`);
+    }
+  }
+
+  // Use text-extracted date if API date is missing or clearly wrong (e.g., API says 19 days but question says June 30)
+  // Prefer the MORE SPECIFIC source: text > API when text has month+day
+  if (textEnd !== null && apiEnd !== null) {
+    // If they differ by more than 7 days, prefer the text-extracted date
+    // (API endDate is sometimes the market close date, not the resolution date)
+    if (Math.abs(textEnd - apiEnd) > 7) {
+      return textEnd;
+    }
+  }
+
+  if (textEnd !== null) return textEnd;
+  if (apiEnd !== null) return apiEnd;
+  return 365; // Unknown
 }
 
 function matchesKeywords(text, keywords) {
