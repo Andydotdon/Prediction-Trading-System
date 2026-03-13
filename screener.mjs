@@ -31,9 +31,9 @@ const CACHE_FILE = `${CACHE_DIR}/screening_cache.json`;
 const TODAY = new Date();
 
 // Bet sizing config — adjust to your bankroll
-const MIN_BET = 500;           // Minimum bet per market ($)
-const MAX_BET = 4000;          // Maximum bet per market ($)
-const MAX_GROUP_EXPOSURE = 8000; // Max total $ in one correlation group (2× MAX_BET)
+const MIN_BET = 2000;           // Minimum bet per market ($)
+const MAX_BET = 10000;          // Maximum bet per market ($)
+const MAX_GROUP_EXPOSURE = 25000; // Max total $ in one correlation group (2.5× MAX_BET)
 
 // Default geopolitical keywords for Iran/ME focus
 const DEFAULT_KEYWORDS = [
@@ -1109,13 +1109,14 @@ function formatDashboard(dashboard) {
     const priceInCents = c.betPrice ? Math.round(c.betPrice * 100) : 50;
 
     // RULE 1: BASE SIZE FROM ALPHA
+    // Alpha 30+ → $7K-$10K | 15-30 → $4K-$7K | 5-15 → $2K-$4K | <5 → SKIP
     let baseSize = 0;
     if (c.alpha >= 30) {
-      baseSize = 3000 + (MAX_BET - 3000) * Math.min(1, (c.alpha - 30) / 20);
+      baseSize = 7000 + (MAX_BET - 7000) * Math.min(1, (c.alpha - 30) / 20);
     } else if (c.alpha >= 15) {
-      baseSize = 1500 + (3000 - 1500) * ((c.alpha - 15) / 15);
+      baseSize = 4000 + (7000 - 4000) * ((c.alpha - 15) / 15);
     } else if (c.alpha >= 5) {
-      baseSize = MIN_BET + (1500 - MIN_BET) * ((c.alpha - 5) / 10);
+      baseSize = MIN_BET + (4000 - MIN_BET) * ((c.alpha - 5) / 10);
     } else {
       baseSize = 0; // Alpha <5 → SKIP
     }
@@ -1145,8 +1146,8 @@ function formatDashboard(dashboard) {
     else if (priceInCents >= 90) priceMult = 0.75;  // Grinds (tiny profit/share)
     baseSize *= priceMult;
 
-    // Final: round to nearest $50, enforce min/skip
-    c.sizeVal = Math.round(baseSize / 50) * 50;
+    // Final: round to nearest $100, enforce min/skip
+    c.sizeVal = Math.round(baseSize / 100) * 100;
     if (c.sizeVal > 0 && c.sizeVal < MIN_BET) c.sizeVal = MIN_BET;
     if (c.sizeVal > MAX_BET) c.sizeVal = MAX_BET;
   });
