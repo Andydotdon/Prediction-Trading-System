@@ -1039,14 +1039,15 @@ function formatDashboard(dashboard) {
     let liqSignal = 0;
     if (c.volume && c.liquidity && c.liquidity > 0) {
       // Volume/liquidity ratio: high = active trading, good fills
+      // Capped lower — liquidity is a qualifier, not an edge
       const ratio = c.volume / c.liquidity;
-      liqSignal = Math.min(100, ratio * 20);
+      liqSignal = Math.min(60, ratio * 8);
     }
 
-    // Weighted blend — Jang is strongest when available, else other factors carry
+    // Weighted blend — Jang & Edge are real edges; GRIND is capital efficiency; LIQ is a qualifier
     const weights = hasJang
-      ? { jang: 0.45, grind: 0.15, edge: 0.15, corr: 0.10, liq: 0.15 }
-      : { jang: 0.00, grind: 0.25, edge: 0.35, corr: 0.15, liq: 0.25 };
+      ? { jang: 0.50, grind: 0.15, edge: 0.15, corr: 0.10, liq: 0.10 }
+      : { jang: 0.00, grind: 0.30, edge: 0.40, corr: 0.15, liq: 0.15 };
 
     const rawAlpha = Math.round(
       jangSignal * weights.jang +
@@ -1060,6 +1061,24 @@ function formatDashboard(dashboard) {
     const potentialProfit = priceInCents != null ? (100 - priceInCents) : 100;
     const alpha = Math.min(rawAlpha, potentialProfit);
 
+    // ── ALPHA TYPE: which advantage is dominant? ──
+    // Shows HOW you beat the market on this specific trade
+    const signals = [
+      { type: 'JANG',  val: jangSignal * weights.jang,  desc: 'Analyst disagrees w/ market' },
+      { type: 'GRIND', val: grindSignal * weights.grind, desc: 'High annualized spread return' },
+      { type: 'EDGE',  val: edgeSignal * weights.edge,   desc: 'Mispriced vs orderbook' },
+      { type: 'CORR',  val: corrSignal * weights.corr,   desc: 'Correlated group hedge/arb' },
+      { type: 'LIQ',   val: liqSignal * weights.liq,     desc: 'Active market, good fills' },
+    ];
+    signals.sort((a, b) => b.val - a.val);
+    // Primary alpha type = strongest signal; secondary if close (within 30%)
+    const topSignal = signals[0];
+    let alphaType = topSignal.type;
+    if (signals[1] && signals[1].val > topSignal.val * 0.7 && signals[1].val > 3) {
+      alphaType += '+' + signals[1].type;
+    }
+    if (alpha === 0) alphaType = '-';
+
     // Conviction = composite (market quality) + alpha bonus
     // Alpha 0-100 → bonus -5 to +30 (only penalizes if alpha = 0 on a Jang market)
     const rawBonus = hasJang
@@ -1067,7 +1086,7 @@ function formatDashboard(dashboard) {
       : Math.min(15, alpha * 0.2);
     const conviction = Math.round(Math.min(100, (c.composite || 0) + rawBonus));
 
-    return { ...c, alpha, hasJang, conviction };
+    return { ...c, alpha, alphaType, hasJang, conviction };
   });
 
   // Sort: KEO top picks first (by priority), then rest by conviction
@@ -1134,9 +1153,9 @@ function formatDashboard(dashboard) {
 
   let out = '';
   out += `  TRADING DASHBOARD — ${reportDate}  |  ${all.length} markets  |  Jang: ${jangCount} covered\n`;
-  out += '  ══════════════════════════════════════════════════════════════════════════════════════════════════════\n';
-  out += '  #   Market                                       Bet  Price  Alpha  Days  Conv     Size  Notes\n';
-  out += '  ───────────────────────────────────────────────────────────────────────────────────────────────────────\n';
+  out += '  ═══════════════════════════════════════════════════════════════════════════════════════════════════════════════\n';
+  out += '  #   Market                                       Bet  Price  Alpha  Type        Days  Conv     Size  Notes\n';
+  out += '  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
 
   all.forEach((c, i) => {
     const q = (c.question || '').substring(0, 45).padEnd(45);
@@ -1148,10 +1167,13 @@ function formatDashboard(dashboard) {
     // Alpha column: multi-factor score (0-100)
     const alpha = c.alpha != null ? String(c.alpha).padStart(5) : '    -';
 
+    // Alpha Type: which advantage drives this trade
+    const atype = (c.alphaType || '-').padEnd(10);
+
     // Size from 5-rule framework
     const size = c.sizeVal > 0 ? `$${c.sizeVal.toLocaleString()}`.padStart(7) : '  SKIP';
 
-    // Notes: Jang source + reasoning or correlation group
+    // Notes: Jang source + short reasoning
     let notes = '';
     if (c.jang?.source === 'KEO' && c.jang.priority < 99) {
       notes = `[KEO#${c.jang.priority}] `;
@@ -1159,16 +1181,16 @@ function formatDashboard(dashboard) {
       notes = '[J] ';
     }
     if (c.jang?.reasoning) {
-      notes += c.jang.reasoning.substring(0, 40);
+      notes += c.jang.reasoning.substring(0, 35);
     } else {
       notes += (c.correlationGroup || '').substring(0, 25);
     }
 
-    out += `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${alpha}  ${days}  ${conv}  ${size}  ${notes}\n`;
+    out += `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${alpha}  ${atype} ${days}  ${conv}  ${size}  ${notes}\n`;
   });
 
-  out += '  ──────────────────────────────────────────────────────────────────────────────────────────────────────\n';
-  out += '  Conv = composite (market quality) + alpha bonus | Alpha = multi-factor score (Jang + GRIND + edge + corr + liq)\n';
+  out += '  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────\n';
+  out += '  Alpha Type: JANG=analyst edge | EDGE=mispriced | GRIND=spread return | CORR=hedge/arb | LIQ=active market\n';
 
   return out;
 }
