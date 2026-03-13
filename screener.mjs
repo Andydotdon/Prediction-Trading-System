@@ -1173,17 +1173,15 @@ function formatDashboard(dashboard) {
     // Size from 5-rule framework
     const size = c.sizeVal > 0 ? `$${c.sizeVal.toLocaleString()}`.padStart(7) : '  SKIP';
 
-    // Notes: Jang source + short reasoning
+    // Notes: does market agree or disagree with Jang?
     let notes = '';
-    if (c.jang?.source === 'KEO' && c.jang.priority < 99) {
-      notes = `[KEO#${c.jang.priority}] `;
-    } else if (c.jang) {
-      notes = '[J] ';
-    }
-    if (c.jang?.reasoning) {
-      notes += c.jang.reasoning.substring(0, 35);
+    if (c.jang) {
+      const bp = c.betPrice ? Math.round(c.betPrice * 100) : 50;
+      if (bp < 30) notes = 'Against Jang';
+      else if (bp < 60) notes = 'Split';
+      else notes = 'Agrees w/ Jang';
     } else {
-      notes += (c.correlationGroup || '').substring(0, 25);
+      notes = (c.correlationGroup || '').substring(0, 25);
     }
 
     out += `  ${String(i + 1).padStart(2)}  ${q} ${bet} ${price}  ${alpha}  ${atype} ${days}  ${conv}  ${size}  ${notes}\n`;
