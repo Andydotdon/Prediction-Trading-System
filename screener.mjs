@@ -1255,7 +1255,7 @@ async function fetchWithRetry(url, retries = 2) {
 }
 
 async function fetchTopHolders(conditionId) {
-  const url = `${DATA_API}/holders?market=${conditionId}&limit=20`;
+  const url = `${DATA_API}/holders?market=${conditionId}&limit=60`;
   return fetchWithRetry(url);
 }
 
@@ -1592,8 +1592,8 @@ async function runSMMReport(market) {
 
   // Profile top wallets from each side (parallel)
   console.log('  Profiling top wallets...');
-  const topYes = yesSide.slice(0, 4);
-  const topNo = noSide.slice(0, 4);
+  const topYes = yesSide.slice(0, 30);
+  const topNo = noSide.slice(0, 30);
   const allToProfile = [...topYes, ...topNo];
 
   const profiles = await Promise.all(
@@ -1699,7 +1699,7 @@ function formatSMMReport(report) {
   out += `    YES price: ${yesP}c | NO price: ${noP}c\n`;
   out += `    Volume: $${Math.round(report.volume).toLocaleString()}\n\n`;
 
-  out += '  HOLDER DISTRIBUTION (Top 20)\n';
+  out += '  HOLDER DISTRIBUTION (Top 60)\n';
   out += `    YES total shares: ${Math.round(report.yesSide.totalShares).toLocaleString()}\n`;
   out += `    NO total shares:  ${Math.round(report.noSide.totalShares).toLocaleString()}\n`;
   out += `    Dominant side: ${report.dominantSide} by ${report.dominantRatio}x\n\n`;
@@ -1740,15 +1740,30 @@ function formatSMMReport(report) {
     return line;
   }
 
-  // YES side wallets
-  out += '  TOP YES HOLDERS\n';
-  for (const h of report.yesSide.holders) {
+  // YES side wallets — show top 8 in detail, summarize the rest
+  const yesHolders = report.yesSide.holders;
+  const noHolders = report.noSide.holders;
+
+  out += `  TOP YES HOLDERS (${yesHolders.length} analyzed)\n`;
+  for (const h of yesHolders.slice(0, 8)) {
     out += formatHolder(h);
   }
+  if (yesHolders.length > 8) {
+    const rest = yesHolders.slice(8);
+    const restSmart = rest.filter(h => ['SMART MONEY', 'WHALE (MIXED)'].includes(h.classification)).length;
+    const restDumb = rest.filter(h => h.classification === 'DUMB MONEY').length;
+    out += `    ... +${rest.length} more (${restSmart} smart, ${restDumb} dumb, ${rest.length - restSmart - restDumb} noise/other)\n`;
+  }
 
-  out += '\n  TOP NO HOLDERS\n';
-  for (const h of report.noSide.holders) {
+  out += `\n  TOP NO HOLDERS (${noHolders.length} analyzed)\n`;
+  for (const h of noHolders.slice(0, 8)) {
     out += formatHolder(h);
+  }
+  if (noHolders.length > 8) {
+    const rest = noHolders.slice(8);
+    const restSmart = rest.filter(h => ['SMART MONEY', 'WHALE (MIXED)'].includes(h.classification)).length;
+    const restDumb = rest.filter(h => h.classification === 'DUMB MONEY').length;
+    out += `    ... +${rest.length} more (${restSmart} smart, ${restDumb} dumb, ${rest.length - restSmart - restDumb} noise/other)\n`;
   }
 
   // Verdict
