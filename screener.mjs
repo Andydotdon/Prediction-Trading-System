@@ -14,10 +14,21 @@
  *   node screener.mjs --smm 3            # SMM report for candidate #3 from last screening
  *   node screener.mjs --smm-all          # SMM reports for all S-TIER and A-TIER candidates
  *   node screener.mjs --dashboard        # Dashboard only (uses last screening_data.json)
+ *   node screener.mjs --seed-db          # Seed Supabase wallet DB from screening data
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { createInterface } from 'readline';
+import { createClient } from '@supabase/supabase-js';
+import 'dotenv/config';
+
+// ── SUPABASE CLIENT ──
+let supabase = null;
+try {
+  if (process.env.SUPABASE_URL?.startsWith('http') && process.env.SUPABASE_KEY?.length > 10) {
+    supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+  }
+} catch { /* Supabase not configured, will use API-only mode */ }
 
 // ═══════════════════════════════════════════════════════════════════════
 // CONFIG
@@ -1295,40 +1306,108 @@ function classifyWallet(profile) {
   return 'NOISE';
 }
 
-// ── WALLET PROFILE CACHE ──
-// Persists to disk so profiles survive across sessions
-const WALLET_CACHE_FILE = 'wallet_cache.json';
+// ── WALLET DATABASE (Supabase) ──
 const WALLET_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-function loadWalletCache() {
-  if (existsSync(WALLET_CACHE_FILE)) {
-    try {
-      return JSON.parse(readFileSync(WALLET_CACHE_FILE, 'utf8'));
-    } catch { return {}; }
+async function getWalletFromDB(address) {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('wallets')
+      .select('*')
+      .eq('address', address.toLowerCase())
+      .single();
+    if (error || !data) return null;
+    // Check 24h TTL
+    if (Date.now() - new Date(data.updated_at).getTime() > WALLET_CACHE_TTL) return null;
+    // Convert DB row back to profile format
+    return {
+      address: data.address,
+      pseudonym: data.pseudonym,
+      positionCount: data.position_count,
+      portfolioValue: data.portfolio_value,
+      totalPnl: data.total_pnl,
+      winRate: data.win_rate,
+      wins: data.wins,
+      losses: data.losses,
+      classification: data.classification,
+      expertise: [], // loaded separately if needed
+      _ts: new Date(data.updated_at).getTime(),
+    };
+  } catch {
+    return null; // DB unreachable, proceed without cache
   }
-  return {};
 }
 
-function saveWalletCache(cache) {
-  writeFileSync(WALLET_CACHE_FILE, JSON.stringify(cache, null, 2));
+async function saveWalletToDB(profile, topicStats = {}) {
+  if (!supabase) return;
+  try {
+    const classification = classifyWallet(profile);
+    // Upsert wallet
+    await supabase.from('wallets').upsert({
+      address: profile.address.toLowerCase(),
+      pseudonym: profile.pseudonym,
+      position_count: profile.positionCount,
+      portfolio_value: Math.round(profile.portfolioValue * 100) / 100,
+      total_pnl: Math.round(profile.totalPnl * 100) / 100,
+      win_rate: profile.winRate,
+      wins: profile.wins,
+      losses: profile.losses,
+      classification,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'address' });
+
+    // Upsert topic expertise rows
+    if (Object.keys(topicStats).length > 0) {
+      const rows = Object.entries(topicStats).map(([topic, stats]) => ({
+        address: profile.address.toLowerCase(),
+        topic,
+        bet_count: stats.count || 0,
+        wins: stats.wins || 0,
+        losses: stats.losses || 0,
+        total_pnl: Math.round((stats.pnl || 0) * 100) / 100,
+        win_rate: (stats.wins + stats.losses) > 0
+          ? Math.round((stats.wins / (stats.wins + stats.losses)) * 100)
+          : null,
+      }));
+      await supabase.from('topic_expertise').upsert(rows, { onConflict: 'address,topic' });
+    }
+  } catch (err) {
+    // Silently fail — don't break screening if DB is down
+  }
 }
 
-const walletCache = loadWalletCache();
+async function saveMarketHolderToDB(address, conditionId, market, side, amount, avgPrice) {
+  if (!supabase) return;
+  try {
+    await supabase.from('market_holders').upsert({
+      address: address.toLowerCase(),
+      condition_id: conditionId,
+      market_slug: market.slug || null,
+      market_question: market.question || null,
+      side,
+      amount,
+      avg_price: avgPrice,
+      seen_at: new Date().toISOString(),
+    }, { onConflict: 'address,condition_id' });
+  } catch {}
+}
 
 async function profileWallet(address, pseudonym, targetConditionId = null) {
-  // Check cache for base profile (everything except target-market-specific fields)
+  // Check Supabase DB for cached base profile
   const cacheKey = address.toLowerCase();
-  const cached = walletCache[cacheKey];
   const now = Date.now();
 
   let positions;
   let baseProfile;
 
-  if (cached && (now - cached._ts) < WALLET_CACHE_TTL) {
-    // Cache hit — reuse base profile, only fetch positions if we need target market data
-    baseProfile = cached;
+  // Try DB cache first
+  const dbCached = await getWalletFromDB(cacheKey);
+
+  if (dbCached) {
+    // DB cache hit — reuse base profile, only fetch positions if we need target market data
+    baseProfile = dbCached;
     if (targetConditionId) {
-      // Need to look up target market position — fetch positions
       positions = await fetchUserPositions(address);
     }
   } else {
@@ -1343,6 +1422,9 @@ async function profileWallet(address, pseudonym, targetConditionId = null) {
     let wins = 0;
     let losses = 0;
     const categoryHits = {};
+    const categoryPnl = {};
+    const categoryWins = {};
+    const categoryLosses = {};
 
     const cats = [
       [/iran|tehran|irgc|khamenei|persian/i, 'Iran/ME'],
@@ -1373,11 +1455,14 @@ async function profileWallet(address, pseudonym, targetConditionId = null) {
           else losses++;
         }
 
-        // Expertise
+        // Expertise + per-topic stats for Supabase
         const slug = (pos.slug || pos.title || pos.question || '').toLowerCase();
         for (const [re, cat] of cats) {
           if (re.test(slug)) {
             categoryHits[cat] = (categoryHits[cat] || 0) + 1;
+            categoryPnl[cat] = (categoryPnl[cat] || 0) + pnl;
+            if (pnl > 1) categoryWins[cat] = (categoryWins[cat] || 0) + 1;
+            else if (pnl < -1) categoryLosses[cat] = (categoryLosses[cat] || 0) + 1;
           }
         }
       }
@@ -1403,9 +1488,19 @@ async function profileWallet(address, pseudonym, targetConditionId = null) {
       _ts: now,
     };
 
-    // Save to cache
-    walletCache[cacheKey] = baseProfile;
-    saveWalletCache(walletCache);
+    // Build topic stats for Supabase
+    const topicStats = {};
+    for (const [cat, count] of Object.entries(categoryHits)) {
+      topicStats[cat] = {
+        count,
+        pnl: categoryPnl[cat] || 0,
+        wins: categoryWins[cat] || 0,
+        losses: categoryLosses[cat] || 0,
+      };
+    }
+
+    // Save to Supabase
+    await saveWalletToDB(baseProfile, topicStats);
   }
 
   // Extract target market data from positions (always fresh, not cached)
@@ -1528,6 +1623,14 @@ async function runSMMReport(market) {
 
   const enrichedYes = topYes.map(enrichHolder);
   const enrichedNo = topNo.map(enrichHolder);
+
+  // Save market_holders to Supabase
+  for (const h of enrichedYes) {
+    saveMarketHolderToDB(h.address, conditionId, market, 'Yes', h.amount, h.targetMarketAvgPrice);
+  }
+  for (const h of enrichedNo) {
+    saveMarketHolderToDB(h.address, conditionId, market, 'No', h.amount, h.targetMarketAvgPrice);
+  }
 
   // Determine smart money side using weighted scoring
   const smartTypes = ['SMART MONEY', 'WHALE (MIXED)'];
@@ -1812,6 +1915,111 @@ async function handleSMMCommand(args) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// SEED DATABASE COMMAND
+// ═══════════════════════════════════════════════════════════════════════
+
+async function handleSeedDB() {
+  if (!supabase) {
+    console.log('  ERROR: Supabase not configured. Set SUPABASE_URL and SUPABASE_KEY in .env');
+    process.exit(1);
+  }
+
+  if (!existsSync('screening_data.json')) {
+    console.log('  ERROR: No screening_data.json found. Run a screening first.');
+    process.exit(1);
+  }
+
+  const data = JSON.parse(readFileSync('screening_data.json', 'utf8'));
+  const candidates = data.candidates || [];
+  console.log(`\n  Loaded ${candidates.length} candidates from screening data.`);
+
+  // Collect all unique holders across all markets
+  const allHolders = new Map(); // address → { pseudonym, markets: [{conditionId, side, amount}] }
+  let marketsProcessed = 0;
+  let marketsFailed = 0;
+
+  for (const candidate of candidates) {
+    if (!candidate.conditionId) continue;
+
+    console.log(`  [${marketsProcessed + 1}/${candidates.length}] Fetching holders: ${candidate.question?.substring(0, 50)}...`);
+
+    const holdersData = await fetchTopHolders(candidate.conditionId);
+    if (!holdersData || !Array.isArray(holdersData) || holdersData.length === 0) {
+      marketsFailed++;
+      await new Promise(r => setTimeout(r, 300));
+      continue;
+    }
+
+    // Parse holders into YES/NO
+    for (const tokenGroup of holdersData) {
+      const holders = tokenGroup.holders || (Array.isArray(tokenGroup) ? tokenGroup : []);
+      for (const h of holders) {
+        const addr = (h.proxyWallet || h.address || '').toLowerCase();
+        if (!addr) continue;
+        const pseudonym = h.pseudonym || h.name || addr.substring(0, 12) + '...';
+        const side = h.outcomeIndex === 0 ? 'Yes' : 'No';
+        const amount = parseFloat(h.amount) || 0;
+
+        if (!allHolders.has(addr)) {
+          allHolders.set(addr, { pseudonym, markets: [] });
+        }
+        allHolders.get(addr).markets.push({
+          conditionId: candidate.conditionId,
+          slug: candidate.slug,
+          question: candidate.question,
+          side,
+          amount,
+        });
+      }
+    }
+
+    marketsProcessed++;
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  console.log(`\n  Fetched holders from ${marketsProcessed} markets (${marketsFailed} failed).`);
+  console.log(`  Found ${allHolders.size} unique wallets. Profiling...\n`);
+
+  // Profile each unique wallet
+  let profiled = 0;
+  let dbSaved = 0;
+  const total = allHolders.size;
+
+  for (const [address, info] of allHolders) {
+    profiled++;
+    if (profiled % 10 === 0 || profiled === total) {
+      console.log(`  Profiling wallet ${profiled}/${total}: ${info.pseudonym}`);
+    }
+
+    try {
+      // profileWallet now auto-saves to Supabase
+      await profileWallet(address, info.pseudonym);
+      dbSaved++;
+
+      // Save market_holders entries
+      for (const mkt of info.markets) {
+        await saveMarketHolderToDB(address, mkt.conditionId, mkt, mkt.side, mkt.amount, null);
+      }
+    } catch (err) {
+      // Skip failed profiles, continue with next
+    }
+
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  console.log(`\n  ═══════════════════════════════════════════`);
+  console.log(`  SEED COMPLETE`);
+  console.log(`    Markets scanned: ${marketsProcessed}`);
+  console.log(`    Unique wallets found: ${allHolders.size}`);
+  console.log(`    Wallets profiled & saved: ${dbSaved}`);
+  console.log(`  ═══════════════════════════════════════════`);
+  console.log(`\n  Check your Supabase dashboard to see the data.`);
+  console.log(`  Useful queries:`);
+  console.log(`    SELECT * FROM wallets WHERE classification = 'SMART MONEY' ORDER BY total_pnl DESC;`);
+  console.log(`    SELECT w.pseudonym, te.* FROM topic_expertise te JOIN wallets w ON te.address = w.address WHERE te.topic = 'Iran/ME' ORDER BY te.win_rate DESC;`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // MAIN PIPELINE
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -1824,6 +2032,15 @@ async function main() {
     console.log('║  POLYMARKET TRADING DASHBOARD — Screening + Jang     ║');
     console.log('╚══════════════════════════════════════════════════════╝');
     await handleDashboard();
+    return;
+  }
+
+  // Handle seed-db command
+  if (args.includes('--seed-db')) {
+    console.log('╔══════════════════════════════════════════════════════╗');
+    console.log('║  POLYMARKET WALLET DB — Seeding from Screening Data  ║');
+    console.log('╚══════════════════════════════════════════════════════╝');
+    await handleSeedDB();
     return;
   }
 
